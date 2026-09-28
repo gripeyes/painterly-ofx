@@ -29,3 +29,16 @@ The input plates were created with the built-in image generator from prompts for
 2. A low-light photographic scene with blue, green, violet, and umber-black regions.
 3. A natural photographic portrait with visible skin and woven fabric detail.
 4. Broad overlapping painted color fields with restrained fine texture.
+
+## Integrated Pigment Phase 3
+
+`PigmentValidation.nk` is the Nuke scene for the persistent
+`org.painterlyofx.Pigment` node. `renders/pigment` contains matched Original, Guided,
+Integrated, field, pre-boundary, pre-reintegration, and signed-difference views.
+Scalar views are displayed as normalized grayscale. Residual and difference views
+use neutral gray as zero, with a display gain of 0.45; that display transform is not
+part of processing.
+
+`fruit-grapes.png` and `laundry-cloth.png` were generated as fixed research fixtures
+with the built-in image generator. Their generation prompts and the present visual
+assessment are recorded in `docs/Phase3IntegratedPigment.md`.

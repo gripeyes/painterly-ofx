@@ -10,6 +10,7 @@ The currently registered effects are:
 |---|---|---|
 | Pigment ChromaDiffusion | `org.painterlyofx.ChromaDiffusion` | Stage 1 effect |
 | Pigment DetailCollapse (Research) | `org.painterlyofx.DetailCollapse` | Stage 2 research effect |
+| Pigment (Research) | `org.painterlyofx.Pigment` | Phase 3 integrated research effect |
 
 Both are grouped under **Pigment** by their OFX descriptors.
 
@@ -96,6 +97,17 @@ DetailCollapse and its saved debug renders:
 /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/Nuke17.0 \
   -t tests/nuke_detailcollapse_validate.py
 ```
+
+Integrated Pigment and its matched comparison/debug renders:
+
+```sh
+/Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/Nuke17.0 \
+  -t tests/nuke_pigment_validate.py
+```
+
+Open `tests/visual/PigmentValidation.nk` after that check for a 1920×1080 interactive
+Viewer setup. The node returned by Nuke's Tab search is labelled `Pigment`, while its
+persistent OFX identifier remains `org.painterlyofx.Pigment`.
 
 These checks use the actual OFX plug-in. Passing core tests alone does not prove that
 Nuke discovered or rendered the bundle.

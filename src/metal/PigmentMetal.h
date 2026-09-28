@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/DetailCollapseResearch.h"
+#include "core/IntegratedPigment.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -59,6 +60,18 @@ struct MetalExecutionRequest {
   ImageGeometry geometry{};
 };
 
+struct IntegratedMetalExecutionRequest {
+  MetalImageView source;
+  MetalImageView destination;
+  MetalImageView mask;
+  bool hasMask = false;
+  bool nativeHostBuffers = false;
+  void* hostCommandQueue = nullptr;
+  RectI renderWindow{};
+  IntegratedPigmentParams params{};
+  ImageGeometry geometry{};
+};
+
 class MetalInstance {
  public:
   MetalInstance();
@@ -67,6 +80,7 @@ class MetalInstance {
   MetalInstance& operator=(const MetalInstance&) = delete;
 
   bool render(const MetalExecutionRequest& request);
+  bool renderIntegrated(const IntegratedMetalExecutionRequest& request);
   const MetalDiagnostics& diagnostics() const noexcept;
   void releaseTransientResources();
 

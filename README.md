@@ -2,15 +2,17 @@
 
 Pigment is an OpenFX image-processing suite for controlled spatial treatment of
 photographic information. The bundle contains the production Stage 1
-**ChromaDiffusion** effect and a temporary **DetailCollapse (Research)** node used to
-evaluate the Stage 2 Rolling YAB Mass reference. Neither path applies a transfer
+**ChromaDiffusion** effect, a temporary **DetailCollapse (Research)** node, and the
+Metal-first **Pigment (Research)** integrated prototype. Neither path applies a transfer
 function, LUT, gamut mapping, or HDR clamp.
 
 The bundle currently targets Apple Silicon. DetailCollapse exposes the preserved
 bilateral reference, Guided CPU, Domain Transform CPU, Guided Metal, and a reserved
 Domain Transform Metal choice. It remains a research interface rather than the final
 DetailCollapse UI. Mass Formation is still an internal mode of that node, not a
-separate public effect. DensityVeil is not implemented.
+separate public effect. DensityVeil is not implemented. The integrated node uses the
+persistent identifier `org.painterlyofx.Pigment`; its label and research parameter
+layout may still change.
 
 ## Build
 
@@ -71,6 +73,19 @@ automated visual-reference render can be repeated with:
 /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/Nuke17.0 \
   -t tests/nuke_detailcollapse_validate.py
 ```
+
+The Phase 3 integrated prototype can be discovered, rendered, and saved as a normal
+Nuke scene with:
+
+```sh
+/Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/Nuke17.0 \
+  -t tests/nuke_pigment_validate.py
+```
+
+This writes matched comparison/debug renders and
+[`tests/visual/PigmentValidation.nk`](tests/visual/PigmentValidation.nk). The current
+prototype meets the interactive performance goal but does not pass the artistic
+acceptance gate; see [the Phase 3 report](docs/Phase3IntegratedPigment.md).
 
 ## Resolve validation
 
@@ -133,6 +148,9 @@ allocation reuse, and CPU/Metal parity. For example:
 ./build/pigment_backend_benchmark --backend guided --width 1920 --height 1080 --mass-scale 8
 PIGMENT_METAL_RESOURCE_DIR="$PWD/build" \
   ./build/pigment_metal_harness --width 1920 --height 1080 --mass-scale 8 --verify
+PIGMENT_METAL_RESOURCE_DIR="$PWD/build" \
+  ./build/pigment_metal_harness --integrated --width 1920 --height 1080 \
+  --mass-scale 18 --warmups 1 --rounds 5
 ```
 
 ## Color and alpha behavior

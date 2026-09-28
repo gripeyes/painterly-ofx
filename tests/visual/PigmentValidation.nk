@@ -1,0 +1,92 @@
+#! /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/libnuke-17.0.1.dylib -nx
+version 17.0 v1
+Root {
+ inputs 0
+ gsv  {
+  __default__ {
+  } 
+}
+ name /Users/j7s/coding/painterly-ofx/tests/visual/PigmentValidation.nk
+ frame 0
+ format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
+ proxy_type scale
+ proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
+ colorManagement Nuke
+ workingSpaceLUT 0
+ monitorLut sRGB
+ monitorOutLUT rec709
+ int8Lut 0
+ int16Lut 0
+ logLut 0
+ floatLut 0
+}
+Read {
+ inputs 0
+ file_type png
+ file /Users/j7s/coding/painterly-ofx/tests/visual/inputs/laundry-cloth.png
+ in_colorspace scene_linear
+ out_colorspace scene_linear
+ name Read1
+ xpos 200
+ ypos -20
+}
+Reformat {
+ type "to box"
+ box_width 1920
+ box_height 1080
+ resize fit
+ name Reformat1
+ xpos 200
+ ypos 80
+}
+OFXorg.painterlyofx.Pigment_v1 {
+ Painterly 1
+ amount 0.7
+ massScale 18
+ massStrength 0.55
+ toneSimilarity 0.25
+ chromaSimilarity 0.18
+ lumaAttraction 0.65
+ chromaAttraction 0.8
+ Structure 1
+ structureScale 10
+ structurePreserve 0.8
+ boundaryPreserve 0.75
+ boundaryExtinction 0.35
+ boundarySoftness 0.15
+ "Spatial Variation" 1
+ veilAmount 0.35
+ veilScale 500
+ veilIrregularity 0.4
+ veilContrast 0.3
+ veilSeed 1
+ Detail 1
+ detailCleanup 0.1
+ fineDetail 0.05
+ mediumDetail 0.15
+ internalVariation 0.3
+ Chroma 1
+ chromaMigration 0.35
+ chromaScale 24
+ chromaEdgeRespect 0.6
+ Output 1
+ mix 1
+ "Research Advanced" 0
+ regionSoftness 0.5
+ boundaryScale 12
+ veilTonalBias 0
+ chromaLumaCoupling 0.6
+ workingGamut ACEScg
+ invertMask false
+ comparisonMode "Integrated Pigment"
+ debugView Final
+ name Pigment1
+ selected true
+ xpos 200
+ ypos 180
+}
+Viewer {
+ name Viewer1
+ xpos 200
+ ypos 280
+}

@@ -49,6 +49,28 @@ struct GpuParams {
   float xyzToRgb[9];
 };
 
+struct GpuIntegratedParams {
+  std::uint32_t width, height, sourceComponents, destinationComponents;
+  std::uint32_t hasMask, maskComponents, premultiplied, invertMask;
+  std::uint32_t comparisonMode, debugView, veilSeed, reserved;
+  float amount, massScale, massStrength, toneSimilarity, chromaSimilarity;
+  float lumaAttraction, chromaAttraction;
+  float structurePreserve, boundaryPreserve, boundaryExtinction, boundarySoftness;
+  float veilAmount, veilScale, veilIrregularity, veilContrast;
+  float detailCleanup, fineDetail, mediumDetail, internalVariation;
+  float chromaMigration, chromaScale, chromaEdgeRespect;
+  float regionSoftness, boundaryScale, veilTonalBias, chromaLumaCoupling, mix;
+  float renderScaleX, renderScaleY, pixelAspect, originX, originY;
+  float whiteX, whiteZ;
+  float rgbToXyz[9];
+  float xyzToRgb[9];
+};
+
+struct GpuRegionLevelParams {
+  std::uint32_t width = 0, height = 0;
+  float levelScale = 1.0f, radiusX = 1.0f, radiusY = 1.0f, quarterBlend = 0.0f;
+};
+
 NSString* metallibPath() {
   if (const char* overridePath = std::getenv("PIGMENT_METAL_RESOURCE_DIR")) {
     return [[NSString stringWithUTF8String:overridePath]
@@ -89,7 +111,14 @@ struct DeviceResources {
                              "pigment_structure_combine", "pigment_boundary",
                              "pigment_prepare_guidance", "pigment_guided_statistics",
                              "pigment_guided_solve", "pigment_guided_reconstruct", "pigment_update",
-                             "pigment_copy_texture", "pigment_final"}) {
+                             "pigment_copy_texture", "pigment_final",
+                             "pigment_integrated_rgb_to_yab", "pigment_integrated_structure",
+                             "pigment_integrated_fields", "pigment_integrated_downsample",
+                             "pigment_integrated_region_iteration",
+                             "pigment_integrated_reconstruct_mass",
+                             "pigment_integrated_boundary_extinction",
+                             "pigment_integrated_chroma", "pigment_integrated_reintegrate",
+                             "pigment_integrated_final"}) {
       id<MTLFunction> function = [library newFunctionWithName:
           [NSString stringWithUTF8String:name]];
       if (!function) {
@@ -110,7 +139,7 @@ struct DeviceResources {
     }
   }
 
-  bool valid() const { return library != nil && pipelines.size() == 11; }
+  bool valid() const { return library != nil && pipelines.size() == 21; }
 };
 
 std::mutex gRegistryMutex;
@@ -328,6 +357,48 @@ GpuParams makeParams(const MetalExecutionRequest& request) {
   return result;
 }
 
+GpuIntegratedParams makeIntegratedParams(const IntegratedMetalExecutionRequest& request) {
+  const auto& p = request.params;
+  GpuIntegratedParams result{};
+  result.width = request.renderWindow.width();
+  result.height = request.renderWindow.height();
+  result.sourceComponents = request.source.components;
+  result.destinationComponents = request.destination.components;
+  result.hasMask = request.hasMask;
+  result.maskComponents = request.hasMask ? request.mask.components : 1;
+  result.premultiplied = p.premultiplied;
+  result.invertMask = p.invertMask;
+  result.comparisonMode = static_cast<std::uint32_t>(p.comparison);
+  result.debugView = static_cast<std::uint32_t>(p.debugView);
+  result.veilSeed = static_cast<std::uint32_t>(p.veilSeed);
+  result.amount = p.amount; result.massScale = p.massScale;
+  result.massStrength = p.massStrength; result.toneSimilarity = p.toneSimilarity;
+  result.chromaSimilarity = p.chromaSimilarity; result.lumaAttraction = p.lumaAttraction;
+  result.chromaAttraction = p.chromaAttraction; result.structurePreserve = p.structurePreserve;
+  result.boundaryPreserve = p.boundaryPreserve; result.boundaryExtinction = p.boundaryExtinction;
+  result.boundarySoftness = p.boundarySoftness; result.veilAmount = p.veilAmount;
+  result.veilScale = p.veilScale; result.veilIrregularity = p.veilIrregularity;
+  result.veilContrast = p.veilContrast; result.detailCleanup = p.detailCleanup;
+  result.fineDetail = p.fineDetail; result.mediumDetail = p.mediumDetail;
+  result.internalVariation = p.internalVariation; result.chromaMigration = p.chromaMigration;
+  result.chromaScale = p.chromaScale; result.chromaEdgeRespect = p.chromaEdgeRespect;
+  result.regionSoftness = p.regionSoftness; result.boundaryScale = p.boundaryScale;
+  result.veilTonalBias = p.veilTonalBias; result.chromaLumaCoupling = p.chromaLumaCoupling;
+  result.mix = p.mix;
+  result.renderScaleX = static_cast<float>(request.geometry.renderScaleX);
+  result.renderScaleY = static_cast<float>(request.geometry.renderScaleY);
+  result.pixelAspect = static_cast<float>(request.geometry.pixelAspect);
+  result.originX = static_cast<float>(request.renderWindow.x1 /
+      std::max(request.geometry.renderScaleX, 1.0e-9));
+  result.originY = static_cast<float>(request.renderWindow.y1 /
+      std::max(request.geometry.renderScaleY, 1.0e-9));
+  const auto matrix = opponentMatrixData(p.gamut);
+  result.whiteX = matrix.whiteX; result.whiteZ = matrix.whiteZ;
+  std::copy(matrix.rgbToXyz.begin(), matrix.rgbToXyz.end(), result.rgbToXyz);
+  std::copy(matrix.xyzToRgb.begin(), matrix.xyzToRgb.end(), result.xyzToRgb);
+  return result;
+}
+
 }  // namespace
 
 struct MetalInstance::Impl {
@@ -338,6 +409,9 @@ struct MetalInstance::Impl {
   NSArray<id<MTLTexture>>* cachedTextures = nil;
   NSUInteger cachedWidth = 0;
   NSUInteger cachedHeight = 0;
+  NSArray<id<MTLTexture>>* cachedIntegratedTextures = nil;
+  NSUInteger cachedIntegratedWidth = 0;
+  NSUInteger cachedIntegratedHeight = 0;
 
   bool render(const MetalExecutionRequest& request) {
     std::lock_guard<std::mutex> lock(mutex);
@@ -675,11 +749,417 @@ struct MetalInstance::Impl {
     return true;
   }
 
+  bool renderIntegrated(const IntegratedMetalExecutionRequest& request) {
+    std::lock_guard<std::mutex> lock(mutex);
+    diagnostics = {};
+    const auto totalStart = Clock::now();
+    std::string reason;
+    if (request.renderWindow.empty() || request.source.components < 3 ||
+        request.destination.components != request.source.components ||
+        !validateView(request.source, request.renderWindow, request.nativeHostBuffers, reason) ||
+        !validateView(request.destination, request.renderWindow, request.nativeHostBuffers, reason) ||
+        (request.hasMask && !validateView(request.mask, request.renderWindow,
+                                          request.nativeHostBuffers, reason))) {
+      diagnostics.failure = MetalFailure::InvalidLayout;
+      diagnostics.message = reason.empty() ? "Unsupported integrated image layout" : reason;
+      return false;
+    }
+
+    id<MTLCommandQueue> queue = request.nativeHostBuffers
+        ? (__bridge id<MTLCommandQueue>)request.hostCommandQueue : fallbackQueue;
+    id<MTLDevice> device = queue.device;
+    if (!request.nativeHostBuffers && !queue) {
+      device = MTLCreateSystemDefaultDevice();
+      fallbackQueue = [device newCommandQueue];
+      queue = fallbackQueue;
+    }
+    if (!device || !queue) {
+      diagnostics.failure = MetalFailure::Unsupported;
+      diagnostics.message = "Metal device or command queue is unavailable";
+      return false;
+    }
+    diagnostics.deviceName = device.name.UTF8String ? device.name.UTF8String
+                                                     : "Unknown Metal device";
+    auto resources = resourcesFor(device);
+    if (!resources->valid()) {
+      diagnostics.failure = MetalFailure::Initialization;
+      diagnostics.message = resources->error;
+      return false;
+    }
+
+    const auto wrapStart = Clock::now();
+    BufferBinding source, destination, mask;
+    if (request.nativeHostBuffers) {
+      source = nativeBinding(request.source, request.renderWindow, reason);
+      destination = nativeBinding(request.destination, request.renderWindow, reason);
+      if (request.hasMask) mask = nativeBinding(request.mask, request.renderWindow, reason);
+      diagnostics.path = MetalPath::NativeHostBuffers;
+    } else {
+      source = cpuInputBinding(device, request.source, request.renderWindow, diagnostics);
+      destination = cpuOutputBinding(device, request.destination, request.renderWindow);
+      if (request.hasMask)
+        mask = cpuInputBinding(device, request.mask, request.renderWindow, diagnostics);
+      diagnostics.sourceNoCopy = source.noCopy;
+      diagnostics.destinationNoCopy = destination.noCopy;
+      diagnostics.path = source.noCopy && destination.noCopy &&
+          (!request.hasMask || mask.noCopy) ? MetalPath::CpuNoCopy : MetalPath::CpuStaging;
+    }
+    if (!source.buffer || !destination.buffer || (request.hasMask && !mask.buffer)) {
+      diagnostics.failure = request.nativeHostBuffers ? MetalFailure::InvalidLayout
+                                                      : MetalFailure::Allocation;
+      diagnostics.message = reason.empty() ? "Could not bind integrated Metal buffers" : reason;
+      return false;
+    }
+    if (request.nativeHostBuffers &&
+        (source.buffer.device != device || destination.buffer.device != device ||
+         (request.hasMask && mask.buffer.device != device))) {
+      diagnostics.failure = MetalFailure::InvalidLayout;
+      diagnostics.message = "Host queue and native buffers use different Metal devices";
+      return false;
+    }
+    diagnostics.wrapOrUploadMs = milliseconds(wrapStart, Clock::now());
+
+    const NSUInteger width = request.renderWindow.width();
+    const NSUInteger height = request.renderWindow.height();
+    const NSUInteger halfWidth = std::max<NSUInteger>(1, (width + 1) / 2);
+    const NSUInteger halfHeight = std::max<NSUInteger>(1, (height + 1) / 2);
+    const NSUInteger quarterWidth = std::max<NSUInteger>(1, (width + 3) / 4);
+    const NSUInteger quarterHeight = std::max<NSUInteger>(1, (height + 3) / 4);
+    const bool reused = !request.nativeHostBuffers && cachedIntegratedTextures &&
+        cachedDevice == device && cachedIntegratedWidth == width &&
+        cachedIntegratedHeight == height;
+    NSArray<id<MTLTexture>>* textures = cachedIntegratedTextures;
+    if (!reused) {
+      NSMutableArray<id<MTLTexture>>* allocated = [NSMutableArray arrayWithCapacity:49];
+      for (int i = 0; i < 28; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, width, height)];
+      for (int i = 0; i < 9; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatR32Float, width, height)];
+      for (int i = 0; i < 2; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, halfWidth, halfHeight)];
+      for (int i = 0; i < 2; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatRG32Float, halfWidth, halfHeight)];
+      for (int i = 0; i < 2; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, quarterWidth, quarterHeight)];
+      for (int i = 0; i < 2; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatRG32Float, quarterWidth, quarterHeight)];
+      textures = [allocated copy];
+      if (textures.count != 45) {
+        diagnostics.failure = MetalFailure::Allocation;
+        diagnostics.message = "Could not allocate integrated Metal scratch textures";
+        return false;
+      }
+      if (!request.nativeHostBuffers) {
+        cachedDevice = device;
+        cachedIntegratedWidth = width;
+        cachedIntegratedHeight = height;
+        cachedIntegratedTextures = textures;
+      }
+    }
+    for (id<MTLTexture> value in textures) {
+      if (!value) {
+        diagnostics.failure = MetalFailure::Allocation;
+        diagnostics.message = "Could not allocate integrated Metal scratch texture";
+        return false;
+      }
+      diagnostics.scratchBytes += value.allocatedSize;
+      if (!reused) ++diagnostics.scratchAllocations;
+    }
+
+    id<MTLTexture> original = textures[0], blurNear = textures[1], blurFar = textures[2];
+    id<MTLTexture> structure = textures[3], mass = textures[4], blurredMass = textures[6];
+    id<MTLTexture> boundaryResult = textures[7], chromaBlur = textures[8];
+    id<MTLTexture> chromaResult = textures[9], fineBlur = textures[10];
+    id<MTLTexture> mediumBlur = textures[11], broadBlur = textures[12], finalYab = textures[13];
+    id<MTLTexture> guidance = textures[14], statWp = textures[15], statWg = textures[16];
+    id<MTLTexture> statWgg = textures[17], statWgp = textures[18], meanWp = textures[19];
+    id<MTLTexture> meanWg = textures[20], meanWgg = textures[21], meanWgp = textures[22];
+    id<MTLTexture> coeffA = textures[23], coeffB = textures[24], filtered = textures[25];
+    id<MTLTexture> cleanupA = textures[26], cleanupB = textures[27];
+    id<MTLTexture> protection = textures[28], permeability = textures[29];
+    id<MTLTexture> veil = textures[30], massField = textures[31], extinctionField = textures[32];
+    id<MTLTexture> chromaField = textures[33], detailField = textures[34];
+    id<MTLTexture> attraction = textures[35], meanWeight = textures[36];
+    id<MTLTexture> halfYabA = textures[37], halfYabB = textures[38];
+    id<MTLTexture> halfPosA = textures[39], halfPosB = textures[40];
+    id<MTLTexture> quarterYabA = textures[41], quarterYabB = textures[42];
+    id<MTLTexture> quarterPosA = textures[43], quarterPosB = textures[44];
+
+    id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+    if (!commandBuffer) {
+      diagnostics.failure = MetalFailure::Encoding;
+      diagnostics.message = "Could not create integrated Metal command buffer";
+      return false;
+    }
+    commandBuffer.label = @"Pigment Integrated Painterly Graph";
+    const GpuIntegratedParams params = makeIntegratedParams(request);
+    const GpuImageLayout emptyMask{};
+    auto pipeline = [&](const char* name) { return resources->pipelines.at(name); };
+    const auto encodeStart = Clock::now();
+    auto stageStart = Clock::now();
+
+    dispatch(commandBuffer, pipeline("pigment_integrated_rgb_to_yab"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setBuffer:source.buffer offset:0 atIndex:0];
+      [e setBytes:&source.layout length:sizeof(source.layout) atIndex:1];
+      [e setBytes:&params length:sizeof(params) atIndex:2]; [e setTexture:original atIndex:0];
+    });
+    diagnostics.rgbToYabEncodeMs = milliseconds(stageStart, Clock::now());
+
+    const float scaleX = static_cast<float>(request.geometry.renderScaleX /
+        std::max(request.geometry.pixelAspect, 1.0e-6));
+    const float scaleY = static_cast<float>(request.geometry.renderScaleY);
+    stageStart = Clock::now();
+    MPSImageGaussianBlur* nearBlur = [[MPSImageGaussianBlur alloc] initWithDevice:device
+        sigma:std::max(0.01f, request.params.structureScale * 0.5f * (scaleX + scaleY))];
+    nearBlur.edgeMode = MPSImageEdgeModeClamp;
+    [nearBlur encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:blurNear];
+    MPSImageGaussianBlur* farBlur = [[MPSImageGaussianBlur alloc] initWithDevice:device
+        sigma:std::max(0.01f, std::max(request.params.structureScale * 2.0f,
+                                      request.params.boundaryScale) * 0.5f * (scaleX + scaleY))];
+    farBlur.edgeMode = MPSImageEdgeModeClamp;
+    [farBlur encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:blurFar];
+    dispatch(commandBuffer, pipeline("pigment_integrated_structure"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setTexture:blurNear atIndex:0]; [e setTexture:blurFar atIndex:1];
+      [e setBytes:&params length:sizeof(params) atIndex:0]; [e setTexture:structure atIndex:2];
+      [e setTexture:protection atIndex:3]; [e setTexture:permeability atIndex:4];
+    });
+    diagnostics.structureEncodeMs = milliseconds(stageStart, Clock::now());
+
+    stageStart = Clock::now();
+    dispatch(commandBuffer, pipeline("pigment_integrated_fields"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setTexture:original atIndex:0];
+      [e setBuffer:request.hasMask ? mask.buffer : source.buffer offset:0 atIndex:0];
+      const auto& layout = request.hasMask ? mask.layout : emptyMask;
+      [e setBytes:&layout length:sizeof(layout) atIndex:1];
+      [e setBytes:&params length:sizeof(params) atIndex:2];
+      [e setTexture:veil atIndex:1]; [e setTexture:massField atIndex:2];
+      [e setTexture:extinctionField atIndex:3]; [e setTexture:chromaField atIndex:4];
+      [e setTexture:detailField atIndex:5];
+    });
+    diagnostics.strengthEncodeMs = milliseconds(stageStart, Clock::now());
+
+    const float quarterBlend = std::max(0.0f, std::min(1.0f,
+        (request.params.massScale - 20.0f) / 8.0f));
+    GpuRegionLevelParams halfLevel{static_cast<std::uint32_t>(halfWidth),
+        static_cast<std::uint32_t>(halfHeight), 0.5f,
+        std::max(0.25f, request.params.massScale * scaleX * 0.5f),
+        std::max(0.25f, request.params.massScale * scaleY * 0.5f), quarterBlend};
+    GpuRegionLevelParams quarterLevel{static_cast<std::uint32_t>(quarterWidth),
+        static_cast<std::uint32_t>(quarterHeight), 0.25f,
+        std::max(0.25f, request.params.massScale * scaleX * 0.25f),
+        std::max(0.25f, request.params.massScale * scaleY * 0.25f), quarterBlend};
+    auto initializeLevel = [&](const GpuRegionLevelParams& level,
+                               id<MTLTexture> yab, id<MTLTexture> position) {
+      dispatch(commandBuffer, pipeline("pigment_integrated_downsample"),
+               level.width, level.height, [&](id<MTLComputeCommandEncoder> e) {
+        [e setTexture:original atIndex:0]; [e setBytes:&level length:sizeof(level) atIndex:0];
+        [e setTexture:yab atIndex:1]; [e setTexture:position atIndex:2];
+      });
+    };
+    initializeLevel(halfLevel, halfYabA, halfPosA);
+    initializeLevel(quarterLevel, quarterYabA, quarterPosA);
+    auto iterateLevel = [&](const GpuRegionLevelParams& level,
+                            id<MTLTexture> yabA, id<MTLTexture> yabB,
+                            id<MTLTexture> posA, id<MTLTexture> posB) {
+      for (int iteration = 0; iteration < 3; ++iteration) {
+        dispatch(commandBuffer, pipeline("pigment_integrated_region_iteration"),
+                 level.width, level.height, [&](id<MTLComputeCommandEncoder> e) {
+          [e setTexture:yabA atIndex:0]; [e setTexture:posA atIndex:1];
+          [e setTexture:protection atIndex:2]; [e setTexture:massField atIndex:3];
+          [e setBytes:&params length:sizeof(params) atIndex:0];
+          [e setBytes:&level length:sizeof(level) atIndex:1];
+          [e setTexture:yabB atIndex:4]; [e setTexture:posB atIndex:5];
+        });
+        std::swap(yabA, yabB); std::swap(posA, posB);
+      }
+      return @[yabA, posA];
+    };
+    stageStart = Clock::now();
+    NSArray<id<MTLTexture>>* halfFinal =
+        iterateLevel(halfLevel, halfYabA, halfYabB, halfPosA, halfPosB);
+    NSArray<id<MTLTexture>>* quarterFinal =
+        iterateLevel(quarterLevel, quarterYabA, quarterYabB, quarterPosA, quarterPosB);
+    halfYabA = halfFinal[0]; halfPosA = halfFinal[1];
+    quarterYabA = quarterFinal[0]; quarterPosA = quarterFinal[1];
+    dispatch(commandBuffer, pipeline("pigment_integrated_reconstruct_mass"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setTexture:original atIndex:0]; [e setTexture:halfYabA atIndex:1];
+      [e setTexture:halfPosA atIndex:2]; [e setTexture:quarterYabA atIndex:3];
+      [e setTexture:quarterPosA atIndex:4]; [e setBytes:&params length:sizeof(params) atIndex:0];
+      [e setBytes:&halfLevel length:sizeof(halfLevel) atIndex:1];
+      [e setBytes:&quarterLevel length:sizeof(quarterLevel) atIndex:2];
+      [e setTexture:mass atIndex:5]; [e setTexture:attraction atIndex:6];
+    });
+    diagnostics.iterationsEncodeMs = milliseconds(stageStart, Clock::now());
+
+    stageStart = Clock::now();
+    MPSImageGaussianBlur* boundaryBlur = [[MPSImageGaussianBlur alloc] initWithDevice:device
+        sigma:std::max(0.01f, request.params.boundaryScale * 0.5f * (scaleX + scaleY))];
+    boundaryBlur.edgeMode = MPSImageEdgeModeClamp;
+    [boundaryBlur encodeToCommandBuffer:commandBuffer sourceTexture:mass destinationTexture:blurredMass];
+    dispatch(commandBuffer, pipeline("pigment_integrated_boundary_extinction"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setTexture:mass atIndex:0]; [e setTexture:blurredMass atIndex:1];
+      [e setTexture:protection atIndex:2]; [e setTexture:extinctionField atIndex:3];
+      [e setBytes:&params length:sizeof(params) atIndex:0];
+      [e setTexture:boundaryResult atIndex:4];
+    });
+    diagnostics.boundaryEncodeMs = milliseconds(stageStart, Clock::now());
+
+    id<MTLTexture> cleaned = boundaryResult;
+    if (request.params.detailCleanup > 0.0f) {
+      GpuParams cleanup{};
+      cleanup.width = width; cleanup.height = height;
+      cleanup.massStrength = request.params.detailCleanup;
+      cleanup.toneSimilarity = request.params.toneSimilarity;
+      cleanup.chromaSimilarity = request.params.chromaSimilarity;
+      const NSUInteger diameter = std::min<NSUInteger>(63, std::max<NSUInteger>(3,
+          (2 * static_cast<NSUInteger>(std::ceil(request.params.massScale * 0.2f)) + 1) | 1));
+      MPSImageBox* guidedBox = [[MPSImageBox alloc] initWithDevice:device
+          kernelWidth:diameter kernelHeight:diameter];
+      guidedBox.edgeMode = MPSImageEdgeModeClamp;
+      id<MTLTexture> current = boundaryResult;
+      id<MTLTexture> next = cleanupA;
+      for (int iteration = 0; iteration < 4; ++iteration) {
+        dispatch(commandBuffer, pipeline("pigment_prepare_guidance"), width, height,
+                 [&](id<MTLComputeCommandEncoder> e) {
+          [e setTexture:current atIndex:0]; [e setBytes:&cleanup length:sizeof(cleanup) atIndex:0];
+          [e setTexture:guidance atIndex:1];
+        });
+        dispatch(commandBuffer, pipeline("pigment_guided_statistics"), width, height,
+                 [&](id<MTLComputeCommandEncoder> e) {
+          [e setTexture:boundaryResult atIndex:0]; [e setTexture:guidance atIndex:1];
+          [e setTexture:permeability atIndex:2]; [e setBytes:&cleanup length:sizeof(cleanup) atIndex:0];
+          [e setTexture:statWp atIndex:3]; [e setTexture:statWg atIndex:4];
+          [e setTexture:statWgg atIndex:5]; [e setTexture:statWgp atIndex:6];
+        });
+        [guidedBox encodeToCommandBuffer:commandBuffer sourceTexture:permeability destinationTexture:meanWeight];
+        [guidedBox encodeToCommandBuffer:commandBuffer sourceTexture:statWp destinationTexture:meanWp];
+        [guidedBox encodeToCommandBuffer:commandBuffer sourceTexture:statWg destinationTexture:meanWg];
+        [guidedBox encodeToCommandBuffer:commandBuffer sourceTexture:statWgg destinationTexture:meanWgg];
+        [guidedBox encodeToCommandBuffer:commandBuffer sourceTexture:statWgp destinationTexture:meanWgp];
+        dispatch(commandBuffer, pipeline("pigment_guided_solve"), width, height,
+                 [&](id<MTLComputeCommandEncoder> e) {
+          [e setTexture:meanWeight atIndex:0]; [e setTexture:meanWp atIndex:1];
+          [e setTexture:meanWg atIndex:2]; [e setTexture:meanWgg atIndex:3];
+          [e setTexture:meanWgp atIndex:4]; [e setBytes:&cleanup length:sizeof(cleanup) atIndex:0];
+          [e setTexture:coeffA atIndex:5]; [e setTexture:coeffB atIndex:6];
+        });
+        [guidedBox encodeToCommandBuffer:commandBuffer sourceTexture:coeffA destinationTexture:statWp];
+        [guidedBox encodeToCommandBuffer:commandBuffer sourceTexture:coeffB destinationTexture:statWg];
+        dispatch(commandBuffer, pipeline("pigment_guided_reconstruct"), width, height,
+                 [&](id<MTLComputeCommandEncoder> e) {
+          [e setTexture:guidance atIndex:0]; [e setTexture:statWp atIndex:1];
+          [e setTexture:statWg atIndex:2]; [e setBytes:&cleanup length:sizeof(cleanup) atIndex:0];
+          [e setTexture:filtered atIndex:3];
+        });
+        dispatch(commandBuffer, pipeline("pigment_update"), width, height,
+                 [&](id<MTLComputeCommandEncoder> e) {
+          [e setTexture:current atIndex:0]; [e setTexture:filtered atIndex:1];
+          [e setTexture:massField atIndex:2]; [e setBytes:&cleanup length:sizeof(cleanup) atIndex:0];
+          [e setTexture:next atIndex:3];
+        });
+        current = next; next = next == cleanupA ? cleanupB : cleanupA;
+      }
+      cleaned = current;
+    }
+
+    stageStart = Clock::now();
+    MPSImageGaussianBlur* chromaGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+        sigma:std::max(0.01f, request.params.chromaScale * 0.5f * (scaleX + scaleY))];
+    chromaGaussian.edgeMode = MPSImageEdgeModeClamp;
+    [chromaGaussian encodeToCommandBuffer:commandBuffer sourceTexture:cleaned destinationTexture:chromaBlur];
+    dispatch(commandBuffer, pipeline("pigment_integrated_chroma"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setTexture:cleaned atIndex:0]; [e setTexture:chromaBlur atIndex:1];
+      [e setTexture:protection atIndex:2]; [e setTexture:chromaField atIndex:3];
+      [e setBytes:&params length:sizeof(params) atIndex:0]; [e setTexture:chromaResult atIndex:4];
+    });
+
+    MPSImageGaussianBlur* fineGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device sigma:1.0f];
+    fineGaussian.edgeMode = MPSImageEdgeModeClamp;
+    [fineGaussian encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:fineBlur];
+    MPSImageGaussianBlur* mediumGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+        sigma:std::max(1.5f, request.params.massScale * 0.2f * 0.5f * (scaleX + scaleY))];
+    mediumGaussian.edgeMode = MPSImageEdgeModeClamp;
+    [mediumGaussian encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:mediumBlur];
+    MPSImageGaussianBlur* broadGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+        sigma:std::max(2.0f, request.params.massScale * 0.5f * (scaleX + scaleY))];
+    broadGaussian.edgeMode = MPSImageEdgeModeClamp;
+    [broadGaussian encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:broadBlur];
+    dispatch(commandBuffer, pipeline("pigment_integrated_reintegrate"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setTexture:original atIndex:0]; [e setTexture:chromaResult atIndex:1];
+      [e setTexture:fineBlur atIndex:2]; [e setTexture:mediumBlur atIndex:3];
+      [e setTexture:broadBlur atIndex:4]; [e setTexture:detailField atIndex:5];
+      [e setBytes:&params length:sizeof(params) atIndex:0]; [e setTexture:finalYab atIndex:6];
+    });
+    diagnostics.reconstructionEncodeMs = milliseconds(stageStart, Clock::now());
+
+    stageStart = Clock::now();
+    dispatch(commandBuffer, pipeline("pigment_integrated_final"), width, height,
+             [&](id<MTLComputeCommandEncoder> e) {
+      [e setBuffer:source.buffer offset:0 atIndex:0]; [e setBuffer:destination.buffer offset:0 atIndex:1];
+      [e setBytes:&source.layout length:sizeof(source.layout) atIndex:2];
+      [e setBytes:&destination.layout length:sizeof(destination.layout) atIndex:3];
+      [e setBytes:&params length:sizeof(params) atIndex:4];
+      [e setTexture:original atIndex:0]; [e setTexture:structure atIndex:1];
+      [e setTexture:veil atIndex:2]; [e setTexture:massField atIndex:3];
+      [e setTexture:extinctionField atIndex:4]; [e setTexture:chromaField atIndex:5];
+      [e setTexture:detailField atIndex:6]; [e setTexture:mass atIndex:7];
+      [e setTexture:attraction atIndex:8]; [e setTexture:mass atIndex:9];
+      [e setTexture:protection atIndex:10]; [e setTexture:boundaryResult atIndex:11];
+      [e setTexture:chromaResult atIndex:12]; [e setTexture:fineBlur atIndex:13];
+      [e setTexture:mediumBlur atIndex:14]; [e setTexture:broadBlur atIndex:15];
+      [e setTexture:finalYab atIndex:16];
+    });
+    diagnostics.yabToRgbEncodeMs = milliseconds(stageStart, Clock::now());
+    diagnostics.commandEncodingMs = milliseconds(encodeStart, Clock::now());
+
+    if (request.nativeHostBuffers) {
+      auto retainedResources = resources;
+      [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+        (void)retainedResources; (void)textures;
+      }];
+      [commandBuffer commit];
+      diagnostics.totalMs = milliseconds(totalStart, Clock::now());
+      diagnostics.message = "Integrated Pigment using native host buffers (asynchronous)";
+      return true;
+    }
+    const auto gpuStart = Clock::now();
+    [commandBuffer commit]; [commandBuffer waitUntilCompleted];
+    const auto gpuEnd = Clock::now();
+    diagnostics.gpuMs = commandBuffer.GPUEndTime > commandBuffer.GPUStartTime
+        ? (commandBuffer.GPUEndTime - commandBuffer.GPUStartTime) * 1000.0
+        : milliseconds(gpuStart, gpuEnd);
+    if (commandBuffer.status == MTLCommandBufferStatusError) {
+      diagnostics.failure = MetalFailure::Execution;
+      const char* error = commandBuffer.error.localizedDescription.UTF8String;
+      diagnostics.message = error ? error : "Integrated Metal command buffer failed";
+      diagnostics.totalMs = milliseconds(totalStart, Clock::now());
+      return false;
+    }
+    const auto readbackStart = Clock::now();
+    unpackOutput(destination, request.destination, request.renderWindow, diagnostics);
+    diagnostics.readbackMs = milliseconds(readbackStart, Clock::now());
+    diagnostics.totalMs = milliseconds(totalStart, Clock::now());
+    diagnostics.deviceAllocatedBytes = device.currentAllocatedSize;
+    diagnostics.message = diagnostics.path == MetalPath::CpuNoCopy
+        ? "Integrated Pigment using no-copy CPU buffers"
+        : "Integrated Pigment using shared staging buffers";
+    return true;
+  }
+
   void releaseTransientResources() {
     std::lock_guard<std::mutex> lock(mutex);
     cachedTextures = nil;
+    cachedIntegratedTextures = nil;
     cachedDevice = nil;
     cachedWidth = cachedHeight = 0;
+    cachedIntegratedWidth = cachedIntegratedHeight = 0;
     diagnostics = {};
   }
 };
@@ -688,6 +1168,35 @@ MetalInstance::MetalInstance() : impl_(std::make_unique<Impl>()) {}
 MetalInstance::~MetalInstance() = default;
 bool MetalInstance::render(const MetalExecutionRequest& request) {
   return impl_->render(request);
+}
+bool MetalInstance::renderIntegrated(const IntegratedMetalExecutionRequest& request) {
+  if (request.params.comparison == PigmentComparisonMode::GuidedDetailCollapse) {
+    MetalExecutionRequest guided;
+    guided.source = request.source; guided.destination = request.destination;
+    guided.mask = request.mask; guided.hasMask = request.hasMask;
+    guided.nativeHostBuffers = request.nativeHostBuffers;
+    guided.hostCommandQueue = request.hostCommandQueue;
+    guided.renderWindow = request.renderWindow; guided.geometry = request.geometry;
+    guided.params.backend = DetailCollapseBackend::GuidedMetal;
+    guided.params.amount = request.params.amount;
+    guided.params.massScale = request.params.massScale;
+    guided.params.structureScale = request.params.structureScale;
+    guided.params.massStrength = request.params.massStrength;
+    guided.params.toneSimilarity = request.params.toneSimilarity;
+    guided.params.chromaSimilarity = request.params.chromaSimilarity;
+    guided.params.boundaryPreserve = request.params.boundaryPreserve;
+    guided.params.boundarySoftness = request.params.boundarySoftness;
+    guided.params.structurePreserve = request.params.structurePreserve;
+    guided.params.internalVariation = request.params.internalVariation;
+    guided.params.lumaMassing = request.params.lumaAttraction;
+    guided.params.chromaMassing = request.params.chromaAttraction;
+    guided.params.invertMask = request.params.invertMask;
+    guided.params.mix = request.params.mix;
+    guided.params.premultiplied = request.params.premultiplied;
+    guided.params.gamut = request.params.gamut;
+    return impl_->render(guided);
+  }
+  return impl_->renderIntegrated(request);
 }
 const MetalDiagnostics& MetalInstance::diagnostics() const noexcept {
   return impl_->diagnostics;

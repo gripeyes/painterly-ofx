@@ -20,6 +20,7 @@ struct Options {
   int rounds = 3;
   float massScale = 8.0f;
   bool verify = false;
+  bool integrated = false;
 };
 
 Options options(int argc, char** argv) {
@@ -36,6 +37,7 @@ Options options(int argc, char** argv) {
     else if (option == "--warmups") result.warmups = std::stoi(value());
     else if (option == "--rounds") result.rounds = std::stoi(value());
     else if (option == "--verify") result.verify = true;
+    else if (option == "--integrated") result.integrated = true;
     else throw std::runtime_error("unknown option: " + option);
   }
   return result;
@@ -53,6 +55,15 @@ pigment::DetailCollapseResearchParams parameters(float massScale) {
   p.boundaryPreserve = 0.9f;
   p.boundarySoftness = 0.08f;
   p.internalVariation = 0.15f;
+  return p;
+}
+
+pigment::IntegratedPigmentParams integratedParameters(float massScale) {
+  pigment::IntegratedPigmentParams p;
+  p.massScale = massScale;
+  p.amount = 0.75f;
+  p.massStrength = 0.6f;
+  p.detailCleanup = 0.0f;
   return p;
 }
 
@@ -97,7 +108,18 @@ int main(int argc, char** argv) {
     std::vector<double> times;
     for (int iteration = 0; iteration < o.warmups + o.rounds; ++iteration) {
       const auto begin = std::chrono::steady_clock::now();
-      if (!instance.render(request)) {
+      bool succeeded = false;
+      if (o.integrated) {
+        pigment::metal::IntegratedMetalExecutionRequest integrated;
+        integrated.source = request.source;
+        integrated.destination = request.destination;
+        integrated.renderWindow = bounds;
+        integrated.params = integratedParameters(o.massScale);
+        succeeded = instance.renderIntegrated(integrated);
+      } else {
+        succeeded = instance.render(request);
+      }
+      if (!succeeded) {
         std::cerr << "Metal failure: " << instance.diagnostics().message << '\n';
         return 2;
       }
@@ -112,6 +134,7 @@ int main(int argc, char** argv) {
                                            (value - sum / times.size());
     const auto& d = instance.diagnostics();
     std::cout << std::fixed << std::setprecision(3)
+              << (o.integrated ? "integrated " : "guided ")
               << o.width << 'x' << o.height << " mass=" << o.massScale
               << " median_ms=" << percentile(times, 0.5)
               << " p95_ms=" << percentile(times, 0.95)
@@ -133,7 +156,7 @@ int main(int argc, char** argv) {
               << " device=\"" << d.deviceName << "\" path=" << static_cast<int>(d.path)
               << '\n';
 
-    if (o.verify) {
+    if (o.verify && !o.integrated) {
       std::vector<float> cpu(source.size(), 0.0f);
       auto p = request.params;
       p.backend = pigment::DetailCollapseBackend::GuidedCpu;
@@ -219,6 +242,31 @@ int main(int argc, char** argv) {
           return 7;
       }
       std::cout << "staged_strided_premultiplied_rgba=pass\n";
+
+      std::fill(output.begin(), output.end(), 0.0f);
+      pigment::metal::IntegratedMetalExecutionRequest integrated;
+      integrated.source = request.source;
+      integrated.destination = request.destination;
+      integrated.renderWindow = bounds;
+      integrated.params = integratedParameters(o.massScale);
+      if (!instance.renderIntegrated(integrated)) {
+        std::cerr << "Integrated Metal failure: " << instance.diagnostics().message << '\n';
+        return 8;
+      }
+      bool changed = false;
+      for (std::size_t i = 0; i < output.size(); ++i) {
+        if (!std::isfinite(output[i])) return 9;
+        if ((i & 3U) == 3U) {
+          if (output[i] != source[i]) return 10;
+        } else if (std::abs(output[i] - source[i]) > 1.0e-6f) {
+          changed = true;
+        }
+      }
+      if (!changed) return 11;
+      integrated.params.amount = 0.0f;
+      if (!instance.renderIntegrated(integrated)) return 12;
+      if (output != source) return 13;
+      std::cout << "integrated_metal_alpha_hdr_identity=pass\n";
     }
     return 0;
   } catch (const std::exception& error) {

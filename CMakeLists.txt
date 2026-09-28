@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(Pigment VERSION 0.1.0 LANGUAGES CXX)
+project(Pigment VERSION 0.2.0 LANGUAGES CXX)
 
 include(CTest)
 include(FetchContent)
@@ -28,6 +28,7 @@ add_library(pigment_core STATIC
   src/core/DirectionalGaussian.cpp
   src/core/RollingYabMass.cpp
   src/core/AcceleratedYabMass.cpp
+  src/core/IntegratedPigment.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)
@@ -92,6 +93,10 @@ if(BUILD_TESTING)
   target_link_libraries(pigment_detail_collapse_tests PRIVATE pigment_core)
   add_test(NAME pigment_detail_collapse_tests COMMAND pigment_detail_collapse_tests)
 
+  add_executable(pigment_integrated_tests tests/IntegratedPigmentTests.cpp)
+  target_link_libraries(pigment_integrated_tests PRIVATE pigment_core)
+  add_test(NAME pigment_integrated_tests COMMAND pigment_integrated_tests)
+
   add_executable(pigment_backend_benchmark tests/BackendBenchmark.cpp)
   target_link_libraries(pigment_backend_benchmark PRIVATE pigment_core)
 endif()
@@ -129,6 +134,7 @@ if(PIGMENT_BUILD_OFX)
     src/ofx/OfxImageHelpers.cpp
     src/plugins/ChromaDiffusion.cpp
     src/plugins/DetailCollapse.cpp
+    src/plugins/Pigment.cpp
     src/ofx/PluginMain.cpp)
   target_link_libraries(Pigment PRIVATE pigment_core pigment_openfx_support)
   if(TARGET pigment_metal)
