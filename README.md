@@ -10,6 +10,10 @@ DaVinci Resolve Studio 21.
 DetailCollapse, Mass Formation, and DensityVeil are intentionally not implemented in
 Stage 1.
 
+The core also contains a Stage 2 **research-only Rolling YAB Mass reference**. It is
+not registered as an OFX effect: Mass Formation is reserved as an internal backend
+for the future DetailCollapse effect.
+
 ## Build
 
 Requirements are CMake 3.25+, a C++17 compiler, Git, and the macOS SDK. CMake fetches
@@ -76,10 +80,33 @@ opponent transform. Masks, tonal weights, similarity metrics, and boundary
 permeability are independent utilities.
 
 Spatial algorithms implement `SpatialOperator`, report either a finite halo or a
-full-region input requirement, and consume generic YAB planes plus per-pixel control
-and boundary fields. ChromaDiffusion uses `DirectionalGaussianOperator`; the
+full-region input requirement, and consume generic YAB planes plus independent
+processing-strength and boundary-permeability fields. Either field can be constant
+or per-pixel. ChromaDiffusion uses `DirectionalGaussianOperator`; the
 interface does not assume convolution or separability and can later host region-aware
 Mass Formation without changing the OFX wrappers.
+
+## Mass Formation research harness
+
+`pigment_mass_research` generates a synthetic HDR YAB scene containing a broad
+silhouette and small high-contrast material detail. It reports fine-detail energy
+before and after consolidation. Passing an output directory also writes PFM reference
+images:
+
+```sh
+./build/pigment_mass_research \
+  --mass-scale 4 \
+  --structure-scale 5 \
+  --output /tmp/pigment-mass-reference
+```
+
+The reference deliberately keeps `Mass Scale` separate from `Structure Scale`.
+`buildStructureBoundaryField` simplifies its guide at Structure Scale before measuring
+significant boundaries, so raw edge magnitude alone does not decide what survives.
+The direct joint-bilateral rolling implementation requests the full source RoD and
+prioritizes correctness and visual evaluation over production performance.
+See [the Mass Formation research note](docs/MassFormationResearch.md) for the fixed
+architecture, literature basis, and remaining prototype order.
 
 ## Color and alpha behavior
 

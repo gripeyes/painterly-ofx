@@ -212,6 +212,9 @@ void testControlFieldAndBoundary() {
   const auto mc = static_cast<const pigment::OwnedPlane&>(mask).view();
   pigment::composeControlField(pc.y,bc,&mc,false,{},control.view(),{});
   near(control.view().at(0,1),0.25f*boundary.view().at(0,1),1e-6f,"external mask composes");
+  pigment::composeProcessingStrengthField(pc.y,&mc,false,{},control.view(),{});
+  near(control.view().at(0,1),0.25f,1e-6f,
+       "processing strength composes independently from boundary protection");
   pigment::composeControlField(pc.y,bc,&mc,true,{},control.view(),{});
   near(control.view().at(0,1),0.75f*boundary.view().at(0,1),1e-6f,"mask inversion composes");
 

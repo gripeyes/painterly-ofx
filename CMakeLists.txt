@@ -16,8 +16,10 @@ set(OPENFX_ROOT "" CACHE PATH "Path to an OpenFX 1.5.1 source tree")
 add_library(pigment_core STATIC
   src/core/ColorSpace.cpp
   src/core/Similarity.cpp
+  src/core/Filtering.cpp
   src/core/Masking.cpp
   src/core/DirectionalGaussian.cpp
+  src/core/RollingYabMass.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)
 target_compile_features(pigment_core PUBLIC cxx_std_17)
@@ -28,6 +30,13 @@ if(BUILD_TESTING)
   add_executable(pigment_core_tests tests/CoreTests.cpp)
   target_link_libraries(pigment_core_tests PRIVATE pigment_core)
   add_test(NAME pigment_core_tests COMMAND pigment_core_tests)
+
+  add_executable(pigment_mass_research tests/MassFormationHarness.cpp)
+  target_link_libraries(pigment_mass_research PRIVATE pigment_core)
+
+  add_executable(pigment_mass_tests tests/MassFormationTests.cpp)
+  target_link_libraries(pigment_mass_tests PRIVATE pigment_core)
+  add_test(NAME pigment_mass_tests COMMAND pigment_mass_tests)
 endif()
 
 if(PIGMENT_BUILD_OFX)

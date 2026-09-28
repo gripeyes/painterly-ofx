@@ -1,4 +1,5 @@
 #include "core/Masking.h"
+#include "core/Filtering.h"
 #include <algorithm>
 #include <cmath>
 
@@ -28,6 +29,37 @@ void buildBoundaryField(ConstYabPlanes src, FloatPlaneView dst,
         const float local = std::max(std::abs(sample(src.y, x, y)), 1e-4f);
         const float relativeGradient = std::sqrt(gx * gx + gy * gy) / local;
         const float edge = smoothstep(0.0f, std::max(o.softness, 1e-5f), relativeGradient);
+        dst.at(x, y) = 1.0f - clamp01(o.protection) * edge;
+      }
+    }
+  });
+}
+
+void buildStructureBoundaryField(ConstYabPlanes src, FloatPlaneView dst,
+                                 const StructureBoundaryOptions& o,
+                                 const ExecutionContext& exec) {
+  const RectI bounds = intersect(dst.bounds, src.y.bounds);
+  if (bounds.empty()) return;
+  OwnedYabPlanes guide(bounds);
+  const float sigma = std::max(0.0f, o.structureScale);
+  gaussianBlurYab(src, guide.view(), sigma, sigma, exec);
+  const ConstYabPlanes g = static_cast<const OwnedYabPlanes&>(guide).view();
+  exec.parallelRows(bounds.y1, bounds.y2, [&](int y1, int y2) {
+    for (int y = y1; y < y2 && !exec.cancelled(); ++y) {
+      for (int x = bounds.x1; x < bounds.x2; ++x) {
+        const auto gradient = [&](ConstFloatPlaneView plane) {
+          const float gx = 0.5f * (sample(plane, x + 1, y) - sample(plane, x - 1, y));
+          const float gy = 0.5f * (sample(plane, x, y + 1) - sample(plane, x, y - 1));
+          return gx * gx + gy * gy;
+        };
+        const float localY = std::max({std::abs(sample(g.y, x, y)),
+                                       std::abs(sample(src.y, x, y)), 1e-3f});
+        const float magnitudeSquared =
+            std::max(0.0f, o.luminanceWeight) * gradient(g.y) / (localY * localY) +
+            std::max(0.0f, o.axisAWeight) * gradient(g.a) +
+            std::max(0.0f, o.axisBWeight) * gradient(g.b);
+        const float significance = std::sqrt(std::max(0.0f, magnitudeSquared));
+        const float edge = smoothstep(0.0f, std::max(o.softness, 1e-5f), significance);
         dst.at(x, y) = 1.0f - clamp01(o.protection) * edge;
       }
     }
@@ -70,5 +102,24 @@ void composeControlField(ConstFloatPlaneView yPlane, ConstFloatPlaneView boundar
   });
 }
 
-}  // namespace pigment
+void composeProcessingStrengthField(ConstFloatPlaneView yPlane,
+                                    const ConstFloatPlaneView* external, bool invert,
+                                    const TonalMaskOptions& options, FloatPlaneView dst,
+                                    const ExecutionContext& exec) {
+  exec.parallelRows(dst.bounds.y1, dst.bounds.y2, [&](int y1, int y2) {
+    for (int y = y1; y < y2 && !exec.cancelled(); ++y) {
+      for (int x = dst.bounds.x1; x < dst.bounds.x2; ++x) {
+        float mask = 1.0f;
+        if (external && external->bounds.contains(x, y)) {
+          mask = clamp01(external->at(x, y));
+          if (invert) mask = 1.0f - mask;
+        } else if (external) {
+          mask = invert ? 1.0f : 0.0f;
+        }
+        dst.at(x, y) = tonalWeight(yPlane.at(x, y), options) * mask;
+      }
+    }
+  });
+}
 
+}  // namespace pigment

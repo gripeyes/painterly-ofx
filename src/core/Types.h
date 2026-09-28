@@ -41,6 +41,23 @@ template <class T> struct PlaneView {
 using FloatPlaneView = PlaneView<float>;
 using ConstFloatPlaneView = PlaneView<const float>;
 
+// Read-only scalar field that can be backed by a plane or represented without
+// allocation as one constant value.
+struct ScalarFieldView {
+  ConstFloatPlaneView plane{};
+  float constant = 1.0f;
+  bool isConstant = true;
+
+  ScalarFieldView() = default;
+  ScalarFieldView(float value) : constant(value), isConstant(true) {}
+  ScalarFieldView(ConstFloatPlaneView value) : plane(value), isConstant(false) {}
+
+  float at(int x, int y) const noexcept {
+    return isConstant ? constant : plane.at(x, y);
+  }
+  RectI bounds() const noexcept { return isConstant ? RectI{} : plane.bounds; }
+};
+
 class OwnedPlane {
  public:
   OwnedPlane() = default;
@@ -109,4 +126,3 @@ struct ImageGeometry {
 };
 
 }  // namespace pigment
-

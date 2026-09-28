@@ -15,8 +15,11 @@ struct InputDomainRequest {
 struct SpatialOperation {
   ConstYabPlanes source;
   YabPlanes destination;
-  ConstFloatPlaneView control;
-  ConstFloatPlaneView boundary;
+  // Independent fields by design: strength controls how far a pixel moves toward
+  // the result, while protection controls whether information may cross a boundary.
+  ScalarFieldView processingStrength;
+  // Values are permeability: 1 crosses freely, 0 is fully protected.
+  ScalarFieldView boundaryProtection;
   RectI outputRegion;
   ImageGeometry geometry;
 };
@@ -30,4 +33,3 @@ class SpatialOperator {
 };
 
 }  // namespace pigment
-

@@ -21,6 +21,11 @@ float bilinear(ConstFloatPlaneView p, double x, double y) noexcept {
   return a * (1.0f - fy) + b * fy;
 }
 
+float bilinear(ScalarFieldView field, double x, double y) noexcept {
+  if (field.isConstant) return field.constant;
+  return bilinear(field.plane, x, y);
+}
+
 void copyPlane(ConstFloatPlaneView src, FloatPlaneView dst, RectI r,
                const ExecutionContext& exec) {
   exec.parallelRows(r.y1, r.y2, [&](int y1, int y2) {
@@ -30,7 +35,7 @@ void copyPlane(ConstFloatPlaneView src, FloatPlaneView dst, RectI r,
 }
 
 void filterPass(ConstFloatPlaneView src, ConstFloatPlaneView guide,
-                ConstFloatPlaneView boundary, FloatPlaneView dst, RectI r,
+                ScalarFieldView boundary, FloatPlaneView dst, RectI r,
                 double dx, double dy, double sigma, float protection,
                 float softness, const ExecutionContext& exec) {
   if (sigma <= 1e-4) { copyPlane(src, dst, r, exec); return; }
@@ -99,19 +104,19 @@ void DirectionalGaussianOperator::apply(const SpatialOperation& op,
 
   OwnedYabPlanes intermediate(r);
   const YabPlanes mid = intermediate.view();
-  filterPass(op.source.y, op.source.y, op.boundary, mid.y, r, dx1, dy1, sigma1,
+  filterPass(op.source.y, op.source.y, op.boundaryProtection, mid.y, r, dx1, dy1, sigma1,
              options_.edgeProtection, options_.edgeSoftness, exec);
-  filterPass(op.source.a, op.source.y, op.boundary, mid.a, r, dx1, dy1, sigma1,
+  filterPass(op.source.a, op.source.y, op.boundaryProtection, mid.a, r, dx1, dy1, sigma1,
              options_.edgeProtection, options_.edgeSoftness, exec);
-  filterPass(op.source.b, op.source.y, op.boundary, mid.b, r, dx1, dy1, sigma1,
+  filterPass(op.source.b, op.source.y, op.boundaryProtection, mid.b, r, dx1, dy1, sigma1,
              options_.edgeProtection, options_.edgeSoftness, exec);
-  filterPass({mid.y.data, mid.y.rowStride, mid.y.bounds}, op.source.y, op.boundary,
+  filterPass({mid.y.data, mid.y.rowStride, mid.y.bounds}, op.source.y, op.boundaryProtection,
              op.destination.y, r, dx2, dy2, sigma2, options_.edgeProtection,
              options_.edgeSoftness, exec);
-  filterPass({mid.a.data, mid.a.rowStride, mid.a.bounds}, op.source.y, op.boundary,
+  filterPass({mid.a.data, mid.a.rowStride, mid.a.bounds}, op.source.y, op.boundaryProtection,
              op.destination.a, r, dx2, dy2, sigma2, options_.edgeProtection,
              options_.edgeSoftness, exec);
-  filterPass({mid.b.data, mid.b.rowStride, mid.b.bounds}, op.source.y, op.boundary,
+  filterPass({mid.b.data, mid.b.rowStride, mid.b.bounds}, op.source.y, op.boundaryProtection,
              op.destination.b, r, dx2, dy2, sigma2, options_.edgeProtection,
              options_.edgeSoftness, exec);
 }
