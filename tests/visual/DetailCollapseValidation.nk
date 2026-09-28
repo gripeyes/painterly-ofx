@@ -1,31 +1,62 @@
 #! /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/libnuke-17.0.1.dylib -nx
+#write_info Write1 file:"/Users/j7s/Downloads/overkill-clothes.jpeg" format:"1920 1080 1" chans:":rgba.red:rgba.green:rgba.blue:" framerange:"1 100" fps:"24" colorspace:"default (matte_paint)" datatype:"8 bit" transfer:"unknown" views:"main" timecode:"00:00:00:00" colorManagement:"OCIO"
 version 17.0 v1
+define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
+<layout version="1.0">
+    <window x="0" y="39" w="1710" h="1073" fullscreen="1" screen="0">
+        <splitter orientation="1">
+            <split size="1081"/>
+            <splitter orientation="1">
+                <split size="1081"/>
+                <dock id="" activePageId="Viewer.1">
+                    <page id="Viewer.1"/>
+                </dock>
+            </splitter>
+            <split size="625"/>
+            <splitter orientation="2">
+                <split size="527"/>
+                <dock id="" activePageId="Properties.1">
+                    <page id="Properties.1"/>
+                    <page id="uk.co.thefoundry.backgroundrenderview.1"/>
+                </dock>
+                <split size="526"/>
+                <dock id="" hideTitles="1" activePageId="DAG.1" focus="true">
+                    <page id="DAG.1"/>
+                </dock>
+            </splitter>
+        </splitter>
+    </window>
+</layout>
+}
 Root {
  inputs 0
  gsv  {
   __default__ {
-  } 
+  }
+  __panel__ {
+   tab {Main}
+  }
+ 
 }
  name /Users/j7s/coding/painterly-ofx/tests/visual/DetailCollapseValidation.nk
- frame 0
  format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
  proxy_type scale
  proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
- colorManagement Nuke
- workingSpaceLUT 0
- monitorLut sRGB
- monitorOutLUT rec709
- int8Lut 0
- int16Lut 0
- logLut 0
- floatLut 0
+ colorManagement OCIO
+ OCIO_config fn-nuke_cg-config-v3.0.0_aces-v2.0_ocio-v2.4
+ defaultViewerLUT "OCIO LUTs"
+ workingSpaceLUT scene_linear
+ monitorLut "ACES 2.0 - SDR 100 nits (Rec.709) (sRGB - Display)"
+ monitorOutLUT "ACES 2.0 - SDR 100 nits (Rec.709) (sRGB - Display)"
+ int8Lut matte_paint
+ int16Lut texture_paint
+ logLut compositing_log
+ floatLut scene_linear
 }
 Read {
  inputs 0
  file_type png
  file /Users/j7s/coding/painterly-ofx/tests/visual/inputs/cgi-specular.png
- in_colorspace scene_linear
- out_colorspace scene_linear
  name Read1
  xpos 200
  ypos -20
@@ -65,12 +96,2424 @@ OFXorg.painterlyofx.DetailCollapse_v1 {
  mix 1
  debugView Final
  name DetailCollapse1
- selected true
  xpos 200
  ypos 180
 }
+OFXorg.painterlyofx.DetailCollapse_v1 {
+ inputs 0
+ backend "Guided CPU"
+ amount 1
+ massScale 10.3
+ structureScale 6.5
+ massStrength 0.97
+ toneSimilarity 0.84
+ chromaSimilarity 0.83
+ boundaryPreserve 0.82
+ boundarySoftness 0.185
+ structurePreserve 0.16
+ internalVariation 0.58
+ lumaMassing 0.66
+ chromaMassing 0.895
+ highlightBias 0.34
+ midtoneBias -0.84
+ shadowBias -0.86
+ rangeEnabled true
+ rangeMinimum 0
+ rangeMaximum 2.4
+ rangeSoftness 0.38
+ workingGamut ACEScg
+ invertMask false
+ mix 1
+ debugView "Rolling Iteration 4"
+ name DetailCollapse3
+ xpos 553
+ ypos 275
+}
+Read {
+ inputs 0
+ file_type exr
+ file /Users/j7s/Downloads/ACES_ODT_SampleFrames-main/ACES_OT_VWG_SampleFrames/ACES_OT_VWG_SampleFrames.0030.exr
+ format "1920 1080 0 0 1920 1080 1 HD_1080"
+ origset true
+ colorspace aces_interchange
+ name Read2
+ xpos 417
+ ypos 99
+}
+OCIOColorSpace {
+ in_colorspace aces_interchange
+ out_colorspace scene_linear
+ name OCIOColorSpace1
+ xpos 369
+ ypos 220
+}
+OFXorg.painterlyofx.DetailCollapse_v1 {
+ backend "Guided Metal"
+ amount 1
+ massScale 10.3
+ structureScale 6.5
+ massStrength 0.97
+ toneSimilarity 0.84
+ chromaSimilarity 0.83
+ boundaryPreserve 0.82
+ boundarySoftness 0.185
+ structurePreserve 0.16
+ internalVariation 0.58
+ lumaMassing 0.325
+ chromaMassing 0.895
+ highlightBias -0.73
+ midtoneBias 0.44
+ shadowBias -0.65
+ rangeEnabled true
+ rangeMinimum 0.19
+ rangeMaximum 0.65
+ rangeSoftness 0.17
+ workingGamut ACEScg
+ invertMask false
+ mix 1
+ debugView "Pre-Reintegration Mass"
+ name DetailCollapse2
+ xpos 353
+ ypos 297
+}
+OFXorg.painterlyofx.DetailCollapse_v1 {
+ backend "Guided Metal"
+ amount 1
+ massScale 3.9
+ structureScale 3.3
+ massStrength 0.765
+ toneSimilarity 0.44
+ chromaSimilarity 0.4
+ boundaryPreserve 0.82
+ boundarySoftness 0.185
+ structurePreserve 0.16
+ internalVariation 0.58
+ lumaMassing 0.325
+ chromaMassing 0.8
+ highlightBias 0.21
+ midtoneBias -0.36
+ shadowBias -0.46
+ rangeEnabled false
+ rangeMinimum 0
+ rangeMaximum 1
+ rangeSoftness 0.17
+ workingGamut ACEScg
+ invertMask false
+ mix 1
+ debugView "Pre-Reintegration Mass"
+ name DetailCollapse5
+ xpos 436
+ ypos 336
+ disable true
+}
+OFXorg.painterlyofx.DetailCollapse_v1 {
+ backend "Guided CPU"
+ amount 1
+ massScale 5.6
+ structureScale 20.7
+ massStrength 0.865
+ toneSimilarity 0.86
+ chromaSimilarity 0.83
+ boundaryPreserve 0.52
+ boundarySoftness 0.685
+ structurePreserve 0.18
+ internalVariation 0.92
+ lumaMassing 0.895
+ chromaMassing 0.895
+ highlightBias 0.13
+ midtoneBias 0.12
+ shadowBias -0.41
+ rangeEnabled true
+ rangeMinimum 0.19
+ rangeMaximum 0.65
+ rangeSoftness 0.17
+ workingGamut ACEScg
+ invertMask false
+ mix 1
+ debugView Final
+ name DetailCollapse4
+ xpos 332
+ ypos 367
+ disable true
+}
+OFXorg.spektrafilm_v0 {
+ "Quick Access" 0
+ quickInputColorSpace ACEScg
+ quickPresetCategory "Clean Slate"
+ quickPresetSelection "Clean Slate"
+ quickFilmFormat 16mm
+ quickGrainEnabled true
+ quickHalationEnabled true
+ quickCameraDiffusionEnabled true
+ quickPrintDiffusionEnabled true
+ "Color Management" 1
+ process "Print simulation"
+ scanNegativeInvert false
+ setKnobFlags {scanNegativeInvert +HIDDEN}
+ negativeScanInput "Cineon / DPX Log Density"
+ setKnobFlags {negativeScanInput +HIDDEN}
+ negativeScanOutput "Display Scan"
+ setKnobFlags {negativeScanOutput +HIDDEN}
+ negativeCalibrationMode "Raw full negative"
+ setKnobFlags {negativeCalibrationMode +HIDDEN}
+ negativeColorImagePolarity "Negative scan"
+ setKnobFlags {negativeColorImagePolarity +HIDDEN}
+ negativeColorImageWorkflow "Print reconstructed negative"
+ setKnobFlags {negativeColorImageWorkflow +HIDDEN}
+ negativeColorScanIlluminant "Profile scan light"
+ setKnobFlags {negativeColorScanIlluminant +HIDDEN}
+ negativeColorScanExposureEv 0
+ setKnobFlags {negativeColorScanExposureEv +HIDDEN}
+ negativeColorBaseDensityScale 1
+ setKnobFlags {negativeColorBaseDensityScale +HIDDEN}
+ negativeColorBaseDensityOffset 0
+ setKnobFlags {negativeColorBaseDensityOffset +HIDDEN}
+ negativeColorBaseBalance {1 1 1}
+ setKnobFlags {negativeColorBaseBalance +HIDDEN}
+ negativeColorMatrixR {1 0 0}
+ setKnobFlags {negativeColorMatrixR +HIDDEN}
+ negativeColorMatrixG {0 1 0}
+ setKnobFlags {negativeColorMatrixG +HIDDEN}
+ negativeColorMatrixB {0 0 1}
+ setKnobFlags {negativeColorMatrixB +HIDDEN}
+ rgbToRawMethod "Arctic 2026"
+ inputColorSpace ACEScg
+ rcmInputColorSpace "DaVinci Intermediate WideGamut"
+ setKnobFlags {rcmInputColorSpace +HIDDEN}
+ outputRole "Display Out SDR"
+ sdrOutputColorSpace "Display P3"
+ sceneOutputColorSpace "DaVinci Intermediate WideGamut"
+ setKnobFlags {sceneOutputColorSpace +HIDDEN}
+ hdrPreset "PQ 1000"
+ setKnobFlags {hdrPreset +HIDDEN}
+ hdrTransfer "Rec.2100 ST2084 (PQ)"
+ setKnobFlags {hdrTransfer +HIDDEN}
+ hdrReferenceWhiteNits 203
+ setKnobFlags {hdrReferenceWhiteNits +HIDDEN}
+ hdrPeakNits 1000
+ setKnobFlags {hdrPeakNits +HIDDEN}
+ hdrExposureEv 0
+ setKnobFlags {hdrExposureEv +HIDDEN}
+ hdrToneMapping "Hard Clip"
+ setKnobFlags {hdrToneMapping +HIDDEN}
+ rcmFullRange false
+ "Color Adaptation" 1
+ colorAdaptation true
+ colorAdaptationInputCompression true
+ colorAdaptationInputLocusProjection false
+ setKnobFlags {colorAdaptationInputLocusProjection +HIDDEN}
+ colorAdaptationInputSaturationRolloff true
+ colorAdaptationInputSaturationMethod Spectral
+ colorAdaptationInputRolloffAmount 1
+ setKnobFlags {colorAdaptationInputRolloffAmount +HIDDEN}
+ colorAdaptationInputRolloffKnee 0.496
+ colorAdaptationInputGamutInsetScale 0.372
+ colorAdaptationSixPoleHanatosR 0.7300000191
+ colorAdaptationSixPoleHanatosY 0.6090000272
+ colorAdaptationSixPoleHanatosG 0.6299999952
+ colorAdaptationSixPoleHanatosC 2
+ colorAdaptationSixPoleHanatosB 0.6999999881
+ colorAdaptationSixPoleHanatosM 0.7049999833
+ colorAdaptationSixPoleHanatosBridgeRY 0.9150000215
+ colorAdaptationSixPoleHanatosBridgeYG 0.8600000143
+ colorAdaptationSixPoleHanatosBridgeGC 2
+ colorAdaptationSixPoleHanatosBridgeCB 0.7519999743
+ colorAdaptationSixPoleHanatosBridgeBM 0.9549999833
+ colorAdaptationSixPoleHanatosBridgeMR 0.9829999804
+ colorAdaptationSixPoleHanatosWaistR 0
+ colorAdaptationSixPoleHanatosWaistY 0
+ colorAdaptationSixPoleHanatosWaistG 0
+ colorAdaptationSixPoleHanatosWaistC 0
+ colorAdaptationSixPoleHanatosWaistB 0
+ colorAdaptationSixPoleHanatosWaistM 0
+ colorAdaptationSixPoleHanatosWaistCenter 1
+ colorAdaptationSixPoleHanatosWaistWidth 0.349999994
+ colorAdaptationSixPoleHanatosOnset 0.8050000072
+ colorAdaptationSixPoleHanatosShoulder 1
+ colorAdaptationSixPoleHanatosAmount 0.6589999795
+ colorAdaptationSixPoleHanatosEnergyRestoration 1
+ colorAdaptationSixPoleHanatosEnergyLimitEv 1
+ colorAdaptationSixPoleArcticR 0.8809999824
+ colorAdaptationSixPoleArcticY 0.9269999862
+ colorAdaptationSixPoleArcticG 0.5490000248
+ colorAdaptationSixPoleArcticC 0.9940000176
+ colorAdaptationSixPoleArcticB 1.095999956
+ colorAdaptationSixPoleArcticM 1.024000049
+ colorAdaptationSixPoleArcticBridgeRY 1.129999995
+ colorAdaptationSixPoleArcticBridgeYG 1.118000031
+ colorAdaptationSixPoleArcticBridgeGC 1.18599999
+ colorAdaptationSixPoleArcticBridgeCB 1.039000034
+ colorAdaptationSixPoleArcticBridgeBM 0.9829999804
+ colorAdaptationSixPoleArcticBridgeMR 1.004999995
+ colorAdaptationSixPoleArcticWaistR 1
+ colorAdaptationSixPoleArcticWaistY 0.7049999833
+ colorAdaptationSixPoleArcticWaistG 0.3569999933
+ colorAdaptationSixPoleArcticWaistC 0
+ colorAdaptationSixPoleArcticWaistB 1
+ colorAdaptationSixPoleArcticWaistM 1
+ colorAdaptationSixPoleArcticWaistCenter 1.350000024
+ colorAdaptationSixPoleArcticWaistWidth 0.476000011
+ colorAdaptationSixPoleArcticOnset 0.6809999943
+ colorAdaptationSixPoleArcticShoulder 1
+ colorAdaptationSixPoleArcticAmount 0.8450000286
+ colorAdaptationSixPoleArcticEnergyRestoration 1
+ colorAdaptationSixPoleArcticEnergyLimitEv 1
+ colorAdaptationCurveSmoothing false
+ setKnobFlags {colorAdaptationCurveSmoothing +HIDDEN}
+ colorAdaptationOutputLightnessCompression false
+ colorAdaptationOutputChromaCompression false
+ colorAdaptationDirSafety true
+ setKnobFlags {colorAdaptationDirSafety +HIDDEN}
+ colorAdaptationNormalizedStocks false
+ colorAdaptationCleanShadows false
+ colorAdaptationAdvancedColorSafety true
+ colorAdaptationSafetySignedInputRescue true
+ setKnobFlags {colorAdaptationSafetySignedInputRescue +HIDDEN}
+ colorAdaptationSafetyRawFiniteSanitization true
+ setKnobFlags {colorAdaptationSafetyRawFiniteSanitization +HIDDEN}
+ colorAdaptationSafetyRawRatioShoulder true
+ setKnobFlags {colorAdaptationSafetyRawRatioShoulder +HIDDEN}
+ colorAdaptationSafetyFilmMonotoneCurves true
+ setKnobFlags {colorAdaptationSafetyFilmMonotoneCurves +HIDDEN}
+ colorAdaptationSafetyPrintMonotoneCurves true
+ setKnobFlags {colorAdaptationSafetyPrintMonotoneCurves +HIDDEN}
+ colorAdaptationSafetyIncludeDirSafety true
+ setKnobFlags {colorAdaptationSafetyIncludeDirSafety +HIDDEN}
+ colorAdaptationSafetyDisplayRatioGuard true
+ setKnobFlags {colorAdaptationSafetyDisplayRatioGuard +HIDDEN}
+ colorAdaptationSafetyDisplayRatioGuardFloor 0.003
+ setKnobFlags {colorAdaptationSafetyDisplayRatioGuardFloor +HIDDEN}
+ colorAdaptationStockEndpointCalibration true
+ setKnobFlags {colorAdaptationStockEndpointCalibration +HIDDEN}
+ colorAdaptationNormalizedScannerCorrection true
+ setKnobFlags {colorAdaptationNormalizedScannerCorrection +HIDDEN}
+ "Illuminant Transfer" 0
+ illuminantTransferEnabled false
+ illuminantTransferSourceMode "Standard Illuminant"
+ illuminantTransferSource D65
+ illuminantTransferSourceTemperature 6500
+ setKnobFlags {illuminantTransferSourceTemperature +HIDDEN}
+ illuminantTransferTargetMode "Standard Illuminant"
+ illuminantTransferTarget D65
+ illuminantTransferTargetTemperature 6500
+ setKnobFlags {illuminantTransferTargetTemperature +HIDDEN}
+ Pre-Adjustments 0
+ tetraEnabled false
+ tetraMode "RGB Vertex"
+ tetraAnchorReference Common
+ setKnobFlags {tetraAnchorReference +HIDDEN}
+ tetraDomain Input-Encoded
+ setKnobFlags {tetraDomain +HIDDEN}
+ tetraReferenceScaledControls true
+ setKnobFlags {tetraReferenceScaledControls +HIDDEN}
+ tetraAmount 1
+ tetraRedRed 0
+ tetraRedGreen 0
+ tetraRedBlue 0
+ tetraGreenRed 0
+ tetraGreenGreen 0
+ tetraGreenBlue 0
+ tetraBlueRed 0
+ tetraBlueGreen 0
+ tetraBlueBlue 0
+ tetraCyanRed 0
+ tetraCyanGreen 0
+ tetraCyanBlue 0
+ tetraMagentaRed 0
+ tetraMagentaGreen 0
+ tetraMagentaBlue 0
+ tetraYellowRed 0
+ tetraYellowGreen 0
+ tetraYellowBlue 0
+ tetraWhiteRed 0
+ tetraWhiteGreen 0
+ tetraWhiteBlue 0
+ tetraMatrixRR 1
+ tetraMatrixRG 0
+ tetraMatrixRB 0
+ tetraMatrixGR 0
+ tetraMatrixGG 1
+ tetraMatrixGB 0
+ tetraMatrixBR 0
+ tetraMatrixBG 0
+ tetraMatrixBB 1
+ tetraRedHue 0
+ setKnobFlags {tetraRedHue +HIDDEN}
+ tetraRedSaturation 0
+ setKnobFlags {tetraRedSaturation +HIDDEN}
+ tetraRedDensity 0
+ setKnobFlags {tetraRedDensity +HIDDEN}
+ tetraRedLuminance 0
+ setKnobFlags {tetraRedLuminance +HIDDEN}
+ tetraGreenHue 0
+ setKnobFlags {tetraGreenHue +HIDDEN}
+ tetraGreenSaturation 0
+ setKnobFlags {tetraGreenSaturation +HIDDEN}
+ tetraGreenDensity 0
+ setKnobFlags {tetraGreenDensity +HIDDEN}
+ tetraGreenLuminance 0
+ setKnobFlags {tetraGreenLuminance +HIDDEN}
+ tetraBlueHue 0
+ setKnobFlags {tetraBlueHue +HIDDEN}
+ tetraBlueSaturation 0
+ setKnobFlags {tetraBlueSaturation +HIDDEN}
+ tetraBlueDensity 0
+ setKnobFlags {tetraBlueDensity +HIDDEN}
+ tetraBlueLuminance 0
+ setKnobFlags {tetraBlueLuminance +HIDDEN}
+ tetraCyanHue 0
+ setKnobFlags {tetraCyanHue +HIDDEN}
+ tetraCyanSaturation 0
+ setKnobFlags {tetraCyanSaturation +HIDDEN}
+ tetraCyanDensity 0
+ setKnobFlags {tetraCyanDensity +HIDDEN}
+ tetraCyanLuminance 0
+ setKnobFlags {tetraCyanLuminance +HIDDEN}
+ tetraMagentaHue 0
+ setKnobFlags {tetraMagentaHue +HIDDEN}
+ tetraMagentaSaturation 0
+ setKnobFlags {tetraMagentaSaturation +HIDDEN}
+ tetraMagentaDensity 0
+ setKnobFlags {tetraMagentaDensity +HIDDEN}
+ tetraMagentaLuminance 0
+ setKnobFlags {tetraMagentaLuminance +HIDDEN}
+ tetraYellowHue 0
+ setKnobFlags {tetraYellowHue +HIDDEN}
+ tetraYellowSaturation 0
+ setKnobFlags {tetraYellowSaturation +HIDDEN}
+ tetraYellowDensity 0
+ setKnobFlags {tetraYellowDensity +HIDDEN}
+ tetraYellowLuminance 0
+ setKnobFlags {tetraYellowLuminance +HIDDEN}
+ "RGB Vertex Protections" 0
+ tetraLuminanceProtection 0
+ tetraNeutralProtection 0
+ tetraHighlightProtection 0
+ tetraGamutProtection 0
+ setKnobFlags {tetraGamutProtection +HIDDEN}
+ tetraTopologyProtection true
+ Technicolor 1
+ setKnobFlags {Technicolor +HIDDEN}
+ technicolorProcess "Process IV"
+ setKnobFlags {technicolorProcess +HIDDEN}
+ technicolorRendition "Historical Release Print - 1942"
+ setKnobFlags {technicolorRendition +HIDDEN}
+ technicolorPreview "Final Projection / Scan"
+ setKnobFlags {technicolorPreview +HIDDEN}
+ "Camera & Color Separation" 1
+ setKnobFlags {"Camera & Color Separation" +HIDDEN}
+ technicolorStockPreset "Historical Best Guess - Daylight"
+ setKnobFlags {technicolorStockPreset +HIDDEN}
+ technicolorCameraStock1 "Eastman 1231 Plus-X Panchromatic"
+ setKnobFlags {technicolorCameraStock1 +HIDDEN}
+ technicolorCameraStock2 "Eastman 1231 Plus-X Panchromatic"
+ setKnobFlags {technicolorCameraStock2 +HIDDEN}
+ technicolorCameraStock3 "Eastman 1231 Plus-X Panchromatic"
+ setKnobFlags {technicolorCameraStock3 +HIDDEN}
+ technicolorIPositiveStock1 "Period Parametric Positive Reconstruction"
+ setKnobFlags {technicolorIPositiveStock1 +HIDDEN}
+ technicolorIPositiveStock2 "Period Parametric Positive Reconstruction"
+ setKnobFlags {technicolorIPositiveStock2 +HIDDEN}
+ technicolorIvCapturePreset "Daylight 1942 - 1234 / 1235-D / 1232-D"
+ setKnobFlags {technicolorIvCapturePreset +HIDDEN}
+ technicolorIvFilterSet "Wratten 32 + 58"
+ setKnobFlags {technicolorIvFilterSet +HIDDEN}
+ technicolorBipackRearLightLoss 0
+ setKnobFlags {technicolorBipackRearLightLoss +HIDDEN}
+ technicolorTwoColorFilterSet "Wratten 25 + 44 Blue-Green Reconstruction"
+ setKnobFlags {technicolorTwoColorFilterSet +HIDDEN}
+ technicolorVCameraNegative "Eastman Color Negative 5247 (Early Process V)"
+ setKnobFlags {technicolorVCameraNegative +HIDDEN}
+ technicolorVSeparationMethod "Panchromatic Matrix + Wratten 25 / 58 / 47 Reconstruction"
+ setKnobFlags {technicolorVSeparationMethod +HIDDEN}
+ technicolorCameraExposureEv 0
+ setKnobFlags {technicolorCameraExposureEv +HIDDEN}
+ technicolorRecordExposureRgb {0 0 0}
+ setKnobFlags {technicolorRecordExposureRgb +HIDDEN}
+ technicolorTwoColorRecordExposureRg {0 0}
+ setKnobFlags {technicolorTwoColorRecordExposureRg +HIDDEN}
+ technicolorIPositiveExposureRg {0 0}
+ setKnobFlags {technicolorIPositiveExposureRg +HIDDEN}
+ technicolorIPositiveContrast 2.369999886
+ setKnobFlags {technicolorIPositiveContrast +HIDDEN}
+ technicolorIPositiveDminRg {0.1299999952 0.1299999952}
+ setKnobFlags {technicolorIPositiveDminRg +HIDDEN}
+ technicolorIPositiveDensityRg {3 3}
+ setKnobFlags {technicolorIPositiveDensityRg +HIDDEN}
+ technicolorIPositiveBlackDensityRg {2.549999952 2.549999952}
+ setKnobFlags {technicolorIPositiveBlackDensityRg +HIDDEN}
+ technicolorIProjectionBalanceRg {0 0}
+ setKnobFlags {technicolorIProjectionBalanceRg +HIDDEN}
+ "Separation Records" 0
+ setKnobFlags {"Separation Records" +HIDDEN}
+ technicolorNegativeDevelopment "Linked Gamma 0.65 (Measured H&D)"
+ setKnobFlags {technicolorNegativeDevelopment +HIDDEN}
+ technicolorSeparationDevelopmentTime "Profile Default"
+ setKnobFlags {technicolorSeparationDevelopmentTime +HIDDEN}
+ technicolorSeparationGammaRgb {1 1 1}
+ setKnobFlags {technicolorSeparationGammaRgb +HIDDEN}
+ technicolorSeparationDminRgb {0 0 0}
+ setKnobFlags {technicolorSeparationDminRgb +HIDDEN}
+ technicolorSeparationDmaxRgb {1 1 1}
+ setKnobFlags {technicolorSeparationDmaxRgb +HIDDEN}
+ "Matrix Formation" 0
+ setKnobFlags {"Matrix Formation" +HIDDEN}
+ technicolorMatrixModel "Staged Tanning-Relief Matrix"
+ setKnobFlags {technicolorMatrixModel +HIDDEN}
+ technicolorTwoColorMatrixExposureRg {3.200000048 3.5}
+ setKnobFlags {technicolorTwoColorMatrixExposureRg +HIDDEN}
+ technicolorTwoColorMatrixFlashRg {0 0}
+ setKnobFlags {technicolorTwoColorMatrixFlashRg +HIDDEN}
+ technicolorTwoColorMatrixContrast 1
+ setKnobFlags {technicolorTwoColorMatrixContrast +HIDDEN}
+ technicolorTwoColorMatrixToe 0
+ setKnobFlags {technicolorTwoColorMatrixToe +HIDDEN}
+ technicolorTwoColorMatrixShoulder 0
+ setKnobFlags {technicolorTwoColorMatrixShoulder +HIDDEN}
+ technicolorTwoColorReliefDepthRg {1 1}
+ setKnobFlags {technicolorTwoColorReliefDepthRg +HIDDEN}
+ technicolorProcessIiiFlashThresholdRg {0 0}
+ setKnobFlags {technicolorProcessIiiFlashThresholdRg +HIDDEN}
+ technicolorProcessIiiReliefPrinterStrength 0.6499999762
+ setKnobFlags {technicolorProcessIiiReliefPrinterStrength +HIDDEN}
+ technicolorMatrixExposureCmy {2.233700037 2.650000095 2.552400112}
+ setKnobFlags {technicolorMatrixExposureCmy +HIDDEN}
+ technicolorVMatrixExposureCmy {0 0 0}
+ setKnobFlags {technicolorVMatrixExposureCmy +HIDDEN}
+ technicolorMatrixFlashCmy {0 0 0}
+ setKnobFlags {technicolorMatrixFlashCmy +HIDDEN}
+ technicolorMatrixContrast 1.200000048
+ setKnobFlags {technicolorMatrixContrast +HIDDEN}
+ technicolorMatrixToe 0
+ setKnobFlags {technicolorMatrixToe +HIDDEN}
+ technicolorMatrixShoulder 0
+ setKnobFlags {technicolorMatrixShoulder +HIDDEN}
+ technicolorReliefDepthCmy {1 1 1}
+ setKnobFlags {technicolorReliefDepthCmy +HIDDEN}
+ "Dye Transfer" 0
+ setKnobFlags {"Dye Transfer" +HIDDEN}
+ technicolorDyeSet "Process IV - NSMM 12593 Y/C/M Wedge"
+ setKnobFlags {technicolorDyeSet +HIDDEN}
+ technicolorTwoColorDyeDensityRg {2.299999952 0.8500000238}
+ setKnobFlags {technicolorTwoColorDyeDensityRg +HIDDEN}
+ technicolorTwoColorDyeSet "Measured Process III - NSMM 12453"
+ setKnobFlags {technicolorTwoColorDyeSet +HIDDEN}
+ technicolorTwoColorDyeYellowMix {0.07500000298 1.5}
+ setKnobFlags {technicolorTwoColorDyeYellowMix +HIDDEN}
+ technicolorTwoColorWashbackContrastRg {1 1}
+ setKnobFlags {technicolorTwoColorWashbackContrastRg +HIDDEN}
+ technicolorProcessIiiWashbackStrengthRg {0.6499999762 0.6499999762}
+ setKnobFlags {technicolorProcessIiiWashbackStrengthRg +HIDDEN}
+ technicolorProcessIiiSecondBath "Same Dye Re-Dye"
+ setKnobFlags {technicolorProcessIiiSecondBath +HIDDEN}
+ technicolorProcessIiiSecondBathAmount 0.75
+ setKnobFlags {technicolorProcessIiiSecondBathAmount +HIDDEN}
+ technicolorProcessIiiSecondBathSelectivity 1
+ setKnobFlags {technicolorProcessIiiSecondBathSelectivity +HIDDEN}
+ technicolorTwoColorWashbackRetentionRg {1 1}
+ setKnobFlags {technicolorTwoColorWashbackRetentionRg +HIDDEN}
+ technicolorTwoColorContactTransferRg {1 1}
+ setKnobFlags {technicolorTwoColorContactTransferRg +HIDDEN}
+ technicolorProcessIiiContactTimeMinutes 5.5
+ setKnobFlags {technicolorProcessIiiContactTimeMinutes +HIDDEN}
+ technicolorProcessIiiDiffusionRate 4
+ setKnobFlags {technicolorProcessIiiDiffusionRate +HIDDEN}
+ technicolorColorCorrection "Measured Dyes Only"
+ setKnobFlags {technicolorColorCorrection +HIDDEN}
+ technicolorDyeTransferAmount 1.350000024
+ setKnobFlags {technicolorDyeTransferAmount +HIDDEN}
+ technicolorDyeDensityCmy {1 1 1}
+ setKnobFlags {technicolorDyeDensityCmy +HIDDEN}
+ technicolorDyeTransferGammaCmy {1.5 1.5 1.5}
+ setKnobFlags {technicolorDyeTransferGammaCmy +HIDDEN}
+ technicolorWashbackRetentionCmy {1 1 1}
+ setKnobFlags {technicolorWashbackRetentionCmy +HIDDEN}
+ technicolorContactTransferCmy {1 1 1}
+ setKnobFlags {technicolorContactTransferCmy +HIDDEN}
+ Receiver 0
+ setKnobFlags {Receiver +HIDDEN}
+ technicolorReceiverPreset "Independent Spectral Dye Deposits"
+ setKnobFlags {technicolorReceiverPreset +HIDDEN}
+ technicolorReceiverBaseDensity 0
+ setKnobFlags {technicolorReceiverBaseDensity +HIDDEN}
+ technicolorReceiverBaseTintCmy {0 0 0}
+ setKnobFlags {technicolorReceiverBaseTintCmy +HIDDEN}
+ technicolorThreeColorReceiverCapacity 4.050000191
+ setKnobFlags {technicolorThreeColorReceiverCapacity +HIDDEN}
+ technicolorThreeColorReceiverRewetAfterYellow 1
+ setKnobFlags {technicolorThreeColorReceiverRewetAfterYellow +HIDDEN}
+ technicolorThreeColorReceiverRewetAfterCyan 1
+ setKnobFlags {technicolorThreeColorReceiverRewetAfterCyan +HIDDEN}
+ technicolorReceiverDensityScale 1
+ setKnobFlags {technicolorReceiverDensityScale +HIDDEN}
+ technicolorProcessIiiReceiverCapacity 1.600000024
+ setKnobFlags {technicolorProcessIiiReceiverCapacity +HIDDEN}
+ technicolorProcessIiiReceiverRewetting 0.8999999762
+ setKnobFlags {technicolorProcessIiiReceiverRewetting +HIDDEN}
+ technicolorProcessIiiTransferOrder "Production: Blue-Green then Red-Orange"
+ setKnobFlags {technicolorProcessIiiTransferOrder +HIDDEN}
+ technicolorIiSupportDensity 0.06
+ setKnobFlags {technicolorIiSupportDensity +HIDDEN}
+ technicolorNeutralCalibration true
+ setKnobFlags {technicolorNeutralCalibration +HIDDEN}
+ technicolorSilverKeyEnabled true
+ setKnobFlags {technicolorSilverKeyEnabled +HIDDEN}
+ technicolorSilverKeyMode "Current Shared-Separation Key"
+ setKnobFlags {technicolorSilverKeyMode +HIDDEN}
+ technicolorSilverKeyDensity 0.5
+ setKnobFlags {technicolorSilverKeyDensity +HIDDEN}
+ technicolorNeutralTrimCmy {0 0 0}
+ setKnobFlags {technicolorNeutralTrimCmy +HIDDEN}
+ "Image Structure" 0
+ setKnobFlags {"Image Structure" +HIDDEN}
+ technicolorImageStructurePreset "35mm Production"
+ setKnobFlags {technicolorImageStructurePreset +HIDDEN}
+ technicolorMtfEnabled true
+ setKnobFlags {technicolorMtfEnabled +HIDDEN}
+ technicolorRecordMtf50Rgb {28 48 36}
+ setKnobFlags {technicolorRecordMtf50Rgb +HIDDEN}
+ technicolorGrainEnabled false
+ setKnobFlags {technicolorGrainEnabled +HIDDEN}
+ technicolorGrainAmount 1
+ setKnobFlags {technicolorGrainAmount +HIDDEN}
+ technicolorGrainSize 1
+ setKnobFlags {technicolorGrainSize +HIDDEN}
+ technicolorGrainBalanceRgb {8 8 8}
+ setKnobFlags {technicolorGrainBalanceRgb +HIDDEN}
+ technicolorGrainSeed 0
+ setKnobFlags {technicolorGrainSeed +HIDDEN}
+ technicolorRegistrationEnabled false
+ setKnobFlags {technicolorRegistrationEnabled +HIDDEN}
+ technicolorCyanRegistrationUm {0 0}
+ setKnobFlags {technicolorCyanRegistrationUm +HIDDEN}
+ technicolorMagentaRegistrationUm {0 0}
+ setKnobFlags {technicolorMagentaRegistrationUm +HIDDEN}
+ technicolorYellowRegistrationUm {0 0}
+ setKnobFlags {technicolorYellowRegistrationUm +HIDDEN}
+ technicolorRegistrationSoftnessUm 0
+ setKnobFlags {technicolorRegistrationSoftnessUm +HIDDEN}
+ technicolorSpatialDyeSpreadCmyUm {8 8 8}
+ setKnobFlags {technicolorSpatialDyeSpreadCmyUm +HIDDEN}
+ technicolorSpatialMordantBinding 0.75
+ setKnobFlags {technicolorSpatialMordantBinding +HIDDEN}
+ technicolorSpatialRewetMobility 0.25
+ setKnobFlags {technicolorSpatialRewetMobility +HIDDEN}
+ Filtering 0
+ cameraUvFilterEnabled false
+ cameraUvCutNm 416
+ cameraIrFilterEnabled false
+ cameraIrCutNm 655
+ cameraWrattenFilter1 None
+ cameraWrattenFilter2 None
+ cameraHoyaColorFilter1 None
+ cameraHoyaColorFilter2 None
+ cameraHeliopanFilter1 None
+ cameraHeliopanFilter2 None
+ cameraColorFilter None
+ cameraHoyaBwFilter2 None
+ cameraWrattenIrFilter1 None
+ cameraWrattenIrFilter2 None
+ cameraNdFilter None
+ cameraFilterExposureCompensation true
+ Film 1
+ filmCategory "Still Film"
+ film "Fujifilm X-Tra 400"
+ filmProfileId 1016
+ filmDevelopmentTime "Profile Default"
+ setKnobFlags {filmDevelopmentTime +HIDDEN}
+ filmFormat 16mm
+ filmPushPullMode Standard
+ filmPushPullStops -2
+ negativeBleachBypassModel "Subtle Neutral"
+ negativeBleachBypassAmount 0
+ negativeLeucoCyanCoupling 1
+ setKnobFlags {negativeLeucoCyanCoupling +HIDDEN}
+ useCurrentDensity true
+ setKnobFlags {useCurrentDensity +HIDDEN}
+ adaptiveExposureCaptureEi Manual
+ setKnobFlags {adaptiveExposureCaptureEi +HIDDEN}
+ filmExposureEv -3.3
+ autoExposure false
+ setKnobFlags {autoExposure +HIDDEN}
+ autoExposureMethod "Center weighted"
+ setKnobFlags {autoExposureMethod +HIDDEN}
+ filmGamma 1
+ setKnobFlags {filmGamma +HIDDEN}
+ "DIR Couplers" 1
+ dirAmount 0.5
+ dirStrength 1
+ dirSafeControlEnvelope true
+ setKnobFlags {dirSafeControlEnvelope +HIDDEN}
+ dirInhibitionSameLayer 1
+ dirInhibitionInterlayer 1
+ "DIR Sharpening" 1
+ dirAllowDiffusionWithoutHalation false
+ dirDiffusionUm 20
+ dirDiffusionTailUm 200
+ dirDiffusionTailWeight 0.03
+ Tonality 0
+ dirLockGammas false
+ dirGammaSameLayerRgb {0.5159000158 0.5934000015 0.2829000056}
+ setKnobFlags {dirGammaSameLayerRgb +HIDDEN}
+ dirGammaRToGb {0.4032000005 0.2487999946}
+ dirGammaGToRb {0.2226999998 0.4339999855}
+ dirGammaBToRg {0.1828999966 0.1799000055}
+ dirGammaMode Current
+ dirDonorLangmuirK {1 1 1}
+ setKnobFlags {dirDonorLangmuirK +HIDDEN}
+ dirReceiverLangmuirK {1 1 1}
+ setKnobFlags {dirReceiverLangmuirK +HIDDEN}
+ Print 1
+ printCategory "Still Film"
+ paper "Kodak Professional Endura Premier"
+ paperProfileId 2001
+ printDevelopmentTime "Profile Default"
+ setKnobFlags {printDevelopmentTime +HIDDEN}
+ printTiming "Filtered Enlarger"
+ printPushPullStops 0.28
+ printBleachBypassModel "Stock Character"
+ printBleachBypassAmount 0.11
+ printExposureEv -1.55
+ printGamma 1
+ setKnobFlags {printGamma +HIDDEN}
+ printShadowShape 0.62
+ printHighlightShape -0.92
+ filterC 4
+ filterMShift -3
+ filterYShift 0
+ preflashExposure 0.05
+ preflashMFilterShift 20
+ preflashYFilterShift -41.5
+ printerLightsGang false
+ setKnobFlags {printerLightsGang +HIDDEN}
+ printerLightsGroup false
+ setKnobFlags {printerLightsGroup +HIDDEN}
+ printerLightR 0
+ setKnobFlags {printerLightR +HIDDEN}
+ printerLightG 0
+ setKnobFlags {printerLightG +HIDDEN}
+ printerLightB 0
+ setKnobFlags {printerLightB +HIDDEN}
+ printerLightCalibration true
+ "Advanced Film Chemistry" 1
+ filmChemistryActive true
+ filmChemistryMode Standard
+ filmChemistryGammaFactor 1
+ filmChemistryGammaFactorFast 1
+ filmChemistryGammaFactorSlow 1
+ filmChemistryGammaFactorRed 1
+ filmChemistryGammaFactorRedFast 1
+ setKnobFlags {filmChemistryGammaFactorRedFast +HIDDEN}
+ filmChemistryGammaFactorRedMedium 1
+ setKnobFlags {filmChemistryGammaFactorRedMedium +HIDDEN}
+ filmChemistryGammaFactorRedSlow 1
+ setKnobFlags {filmChemistryGammaFactorRedSlow +HIDDEN}
+ filmChemistryGammaFactorGreen 1
+ filmChemistryGammaFactorGreenFast 1
+ setKnobFlags {filmChemistryGammaFactorGreenFast +HIDDEN}
+ filmChemistryGammaFactorGreenMedium 1
+ setKnobFlags {filmChemistryGammaFactorGreenMedium +HIDDEN}
+ filmChemistryGammaFactorGreenSlow 1
+ setKnobFlags {filmChemistryGammaFactorGreenSlow +HIDDEN}
+ filmChemistryGammaFactorBlue 1
+ filmChemistryGammaFactorBlueFast 1
+ setKnobFlags {filmChemistryGammaFactorBlueFast +HIDDEN}
+ filmChemistryGammaFactorBlueMedium 1
+ setKnobFlags {filmChemistryGammaFactorBlueMedium +HIDDEN}
+ filmChemistryGammaFactorBlueSlow 1
+ setKnobFlags {filmChemistryGammaFactorBlueSlow +HIDDEN}
+ filmChemistryDeveloperExhaustion 0
+ "Advanced Print Chemistry" 1
+ printCurveSource "Parametric Curves"
+ setKnobFlags {printCurveSource +HIDDEN}
+ printChemistryActive true
+ printChemistryMode Standard
+ printChemistryGammaFactor 1
+ printChemistryGammaFactorFast 1
+ printChemistryGammaFactorSlow 1
+ printChemistryGammaFactorRed 1
+ printChemistryGammaFactorRedFast 1
+ setKnobFlags {printChemistryGammaFactorRedFast +HIDDEN}
+ printChemistryGammaFactorRedMedium 1
+ setKnobFlags {printChemistryGammaFactorRedMedium +HIDDEN}
+ printChemistryGammaFactorRedSlow 1
+ setKnobFlags {printChemistryGammaFactorRedSlow +HIDDEN}
+ printChemistryGammaFactorGreen 1
+ printChemistryGammaFactorGreenFast 1
+ setKnobFlags {printChemistryGammaFactorGreenFast +HIDDEN}
+ printChemistryGammaFactorGreenMedium 1
+ setKnobFlags {printChemistryGammaFactorGreenMedium +HIDDEN}
+ printChemistryGammaFactorGreenSlow 1
+ setKnobFlags {printChemistryGammaFactorGreenSlow +HIDDEN}
+ printChemistryGammaFactorBlue 1
+ printChemistryGammaFactorBlueFast 1
+ setKnobFlags {printChemistryGammaFactorBlueFast +HIDDEN}
+ printChemistryGammaFactorBlueMedium 1
+ setKnobFlags {printChemistryGammaFactorBlueMedium +HIDDEN}
+ printChemistryGammaFactorBlueSlow 1
+ setKnobFlags {printChemistryGammaFactorBlueSlow +HIDDEN}
+ printChemistryDeveloperExhaustion 0
+ printPaperDensityRangeActive true
+ printPaperFogDensity 0
+ printPaperBaseDensityOffset -0.016
+ printPaperDmaxScale 1
+ Grain 1
+ grainEnabled true
+ grainModel RMS
+ grainAmount 1
+ grainSaturation 0.075
+ grainSublayersEnabled true
+ grainSubLayerCount 1
+ grainRmsMultiplier 0.74
+ grainRmsGranularity {6 8 10}
+ setKnobFlags {grainRmsGranularity +HIDDEN}
+ grainMultiplicativeUsmSigma 0.7
+ setKnobFlags {grainMultiplicativeUsmSigma +HIDDEN}
+ grainMultiplicativeUsmAmount 1.5
+ setKnobFlags {grainMultiplicativeUsmAmount +HIDDEN}
+ grainParticleAreaUm2 0.1
+ setKnobFlags {grainParticleAreaUm2 +HIDDEN}
+ grainParticleScale {1.200000048 1 2.5}
+ setKnobFlags {grainParticleScale +HIDDEN}
+ grainParticleScaleLayers {6 1 0.400000006}
+ setKnobFlags {grainParticleScaleLayers +HIDDEN}
+ grainDensityMin {0.03999999911 0.05000000075 0.05999999866}
+ setKnobFlags {grainDensityMin +HIDDEN}
+ grainUniformity {0.9900000095 0.9700000286 0.9800000191}
+ setKnobFlags {grainUniformity +HIDDEN}
+ grainFinalBlurUm 7.17
+ setKnobFlags {grainFinalBlurUm +HIDDEN}
+ grainBlurDyeCloudsUm 1
+ grainMicroStructure {0.2 30}
+ grainSeed 956284
+ grainAnimate true
+ Halation 1
+ halationEnabled true
+ scatterAmount 0.43
+ scatterScale 1
+ halationAmount 1
+ halationScale 1
+ halationBoostEv 0
+ halationBoostRange 0.3
+ halationProtectEv 4
+ halationStrength {0.05000000075 0.01499999966 0}
+ halationDirSharpening true
+ Diffusion 1
+ cameraDiffusionEnabled true
+ cameraDiffusionFamily CineBloom
+ cameraDiffusionStrength 0.5
+ cameraDiffusionSpatialScale 0.38
+ cameraDiffusionHaloWarmth -0.91
+ cameraDiffusionCoreIntensity 2.56
+ cameraDiffusionCoreSize 0.76
+ cameraDiffusionHaloIntensity 0.68
+ cameraDiffusionHaloSize 0.8
+ cameraDiffusionBloomIntensity 0.54
+ cameraDiffusionBloomSize 0.92
+ printDiffusionEnabled true
+ printDiffusionFamily "Black Pro-Mist"
+ printDiffusionStrength 0.18
+ printDiffusionSpatialScale 0.42
+ printDiffusionHaloWarmth 0.34
+ printDiffusionCoreIntensity 0.68
+ printDiffusionCoreSize 0.7
+ printDiffusionHaloIntensity 0.6
+ printDiffusionHaloSize 0.7
+ printDiffusionBloomIntensity 0.62
+ printDiffusionBloomSize 0.54
+ Scanner 1
+ scannerEnabled true
+ scannerWhiteCorrection false
+ scannerBlackCorrection false
+ scannerWhiteLevel 0.98
+ scannerBlackLevel 0.01
+ glarePercent 0.03
+ glareRoughness 0.7
+ glareBlur 0.5
+ glareAnimate false
+ scannerMtf50LpMm 60
+ scannerUnsharpRadiusUm 5
+ scannerUnsharpAmount 0.7
+ Effects 1
+ quickLensDistortionEnabled false
+ quickLensDistortionPreset "Modern Corrected"
+ quickVignetteEnabled false
+ quickVignettePreset "Soft Artistic"
+ quickBokehEnabled false
+ quickBokehPreset "Soft Circular"
+ quickComaEnabled false
+ quickComaPreset "Subtle Edge Coma"
+ quickChromaticAberrationEnabled false
+ quickChromaticAberrationPreset "Subtle Lateral"
+ quickFilmGateEnabled false
+ quickFilmGateFormatPreset "35mm Academy (1.375:1)"
+ quickFilmPlaneEnabled false
+ quickGateWeaveEnabled false
+ quickFlickerEnabled false
+ quickFlickerPreset "Subtle Camera"
+ quickTimingShiftEnabled false
+ quickTimingShiftPreset "Subtle Down"
+ quickFilmDamageEnabled false
+ setKnobFlags {quickFilmDamageEnabled +HIDDEN}
+ quickFilmDamagePreset "Light Handling"
+ setKnobFlags {quickFilmDamagePreset +HIDDEN}
+ "Lens Distortion" 0
+ lensDistortionEnabled false
+ lensDistortionPreset "Modern Corrected"
+ lensDistortionModel Spherical
+ lensDistortionControls Creative
+ lensDistortionAmountPercent 100
+ lensDistortionCenter {0 0}
+ lensDistortionDecenteringEnabled false
+ lensDistortionTangentialPercent {0 0}
+ lensDistortionAutoCrop true
+ lensDistortionOutsideImage Black
+ lensDistortionAffectAlpha false
+ lensDistortionRadialPercent -0.2
+ lensDistortionMoustachePercent 0.05
+ lensDistortionSphericalCoefficients {0 0 0}
+ setKnobFlags {lensDistortionSphericalCoefficients +HIDDEN}
+ lensDistortionAnamorphicRatio 2
+ setKnobFlags {lensDistortionAnamorphicRatio +HIDDEN}
+ lensDistortionRotationDegrees 0
+ setKnobFlags {lensDistortionRotationDegrees +HIDDEN}
+ lensDistortionAnamorphicDistortionPercent {-0.8 -0.2}
+ setKnobFlags {lensDistortionAnamorphicDistortionPercent +HIDDEN}
+ lensDistortionAnamorphicMoustachePercent {0 0}
+ setKnobFlags {lensDistortionAnamorphicMoustachePercent +HIDDEN}
+ lensDistortionCrossCouplingPercent 0
+ setKnobFlags {lensDistortionCrossCouplingPercent +HIDDEN}
+ lensDistortionSqueezeVariationPercent 0
+ setKnobFlags {lensDistortionSqueezeVariationPercent +HIDDEN}
+ lensDistortionLinearScale {1 1}
+ setKnobFlags {lensDistortionLinearScale +HIDDEN}
+ lensDistortionDegree2Self {0 0}
+ setKnobFlags {lensDistortionDegree2Self +HIDDEN}
+ lensDistortionDegree2Cross {0 0}
+ setKnobFlags {lensDistortionDegree2Cross +HIDDEN}
+ lensDistortionDegree4 {0 0}
+ setKnobFlags {lensDistortionDegree4 +HIDDEN}
+ lensDistortionFisheyeProjection Equidistant
+ setKnobFlags {lensDistortionFisheyeProjection +HIDDEN}
+ lensDistortionFocalLengthMm 12
+ setKnobFlags {lensDistortionFocalLengthMm +HIDDEN}
+ lensDistortionImageCircle false
+ setKnobFlags {lensDistortionImageCircle +HIDDEN}
+ lensDistortionMaximumFovDegrees 180
+ setKnobFlags {lensDistortionMaximumFovDegrees +HIDDEN}
+ lensDistortionFisheyeResidualPercent 0
+ setKnobFlags {lensDistortionFisheyeResidualPercent +HIDDEN}
+ lensDistortionFisheyeMoustachePercent 0
+ setKnobFlags {lensDistortionFisheyeMoustachePercent +HIDDEN}
+ lensDistortionThetaK12 {0 0}
+ setKnobFlags {lensDistortionThetaK12 +HIDDEN}
+ lensDistortionThetaK34 {0 0}
+ setKnobFlags {lensDistortionThetaK34 +HIDDEN}
+ Vignette 0
+ vignetteEnabled false
+ vignettePreset "Soft Artistic"
+ vignetteModel Artistic
+ vignetteAmountPercent 100
+ vignetteCenter {0 0}
+ vignetteAnamorphicRatio 1
+ vignetteRotationDegrees 0
+ vignetteRoundness 2
+ vignetteFocalLengthMm 50
+ setKnobFlags {vignetteFocalLengthMm +HIDDEN}
+ vignetteAperture 2.8
+ setKnobFlags {vignetteAperture +HIDDEN}
+ vignetteNaturalFalloffPercent 75
+ setKnobFlags {vignetteNaturalFalloffPercent +HIDDEN}
+ vignetteMechanicalEnabled true
+ setKnobFlags {vignetteMechanicalEnabled +HIDDEN}
+ vignetteMechanicalDarkeningStops 0.2
+ setKnobFlags {vignetteMechanicalDarkeningStops +HIDDEN}
+ vignetteMechanicalOnsetPercent 72
+ setKnobFlags {vignetteMechanicalOnsetPercent +HIDDEN}
+ vignetteMechanicalSoftnessPercent 24
+ setKnobFlags {vignetteMechanicalSoftnessPercent +HIDDEN}
+ vignetteArtisticEdgeDarkeningStops 0.75
+ vignetteArtisticMidpointPercent 45
+ vignetteArtisticSoftnessPercent 45
+ vignetteArtisticCurve 1.5
+ vignetteColorShadingEnabled false
+ vignetteColorShadingStops {0 0 0}
+ vignetteColorShadingOnsetPercent 50
+ vignetteColorShadingSoftnessPercent 40
+ Bokeh 0
+ bokehEnabled false
+ bokehPreset "Soft Circular"
+ bokehAmountPercent 100
+ bokehCenterDefocusUm 0
+ bokehEdgeDefocusUm 60
+ bokehCenter {0 0}
+ bokehFieldOnsetPercent 15
+ bokehFieldFalloff 1.75
+ bokehAnamorphicRatio 1
+ bokehApertureBlades 0
+ bokehBladeCurvaturePercent 100
+ bokehApertureRotationDegrees 0
+ bokehEdgeSoftnessPercent 8
+ bokehRimBiasPercent 0
+ bokehCatEyeEnabled false
+ bokehCatEyeAmountPercent 35
+ bokehCatEyeOnsetPercent 55
+ bokehCatEyeSoftnessPercent 25
+ bokehSwirlEnabled false
+ bokehSwirlModel "Aspect Stretch"
+ bokehSwirlAmountPercent 50
+ bokehSwirlOnsetPercent 35
+ bokehSwirlFalloff 2
+ bokehPetzvalControls Simple
+ setKnobFlags {bokehPetzvalControls +HIDDEN}
+ bokehPetzvalAmountPercent 100
+ setKnobFlags {bokehPetzvalAmountPercent +HIDDEN}
+ bokehPetzvalEdgeAstigmatismUm 30
+ setKnobFlags {bokehPetzvalEdgeAstigmatismUm +HIDDEN}
+ bokehPetzvalOnsetPercent 0
+ setKnobFlags {bokehPetzvalOnsetPercent +HIDDEN}
+ bokehPetzvalFalloff 2
+ setKnobFlags {bokehPetzvalFalloff +HIDDEN}
+ bokehPetzvalExtremeQuality false
+ setKnobFlags {bokehPetzvalExtremeQuality +HIDDEN}
+ bokehHighlightResponse Automatic
+ bokehHighlightThresholdEv 3
+ setKnobFlags {bokehHighlightThresholdEv +HIDDEN}
+ bokehHighlightKneeEv 1
+ setKnobFlags {bokehHighlightKneeEv +HIDDEN}
+ bokehHighlightGainStops 0.5
+ setKnobFlags {bokehHighlightGainStops +HIDDEN}
+ bokehAffectAlpha false
+ bokehOutsideImage Renormalize
+ Coma 0
+ comaEnabled false
+ comaPreset "Subtle Edge Coma"
+ comaAmountPercent 100
+ comaEdgeStrengthUm 12
+ comaAperture 2.8
+ comaFieldOnsetPercent 15
+ comaFieldFalloff 1.5
+ comaDirection Outward
+ comaOrientationDegrees 0
+ comaTangentialSpreadPercent 100
+ comaPreserveImagePosition true
+ comaChromaticEnabled false
+ comaChromaticScaleRgbPercent {100 100 100}
+ comaCenter {0 0}
+ comaAnamorphicRatio 1
+ comaApertureBlades 0
+ comaBladeCurvaturePercent 100
+ comaApertureRotationDegrees 0
+ comaEdgeSoftnessPercent 8
+ comaRimBiasPercent 0
+ comaCatEyeEnabled false
+ comaCatEyeAmountPercent 35
+ comaCatEyeOnsetPercent 55
+ comaCatEyeSoftnessPercent 25
+ comaAffectAlpha false
+ comaOutsideImage Renormalize
+ "Chromatic Aberration" 0
+ chromaticAberrationEnabled false
+ chromaticAberrationPreset "Subtle Lateral"
+ chromaticAberrationAmountPercent 100
+ chromaticAberrationCenter {0 0}
+ chromaticAberrationAnamorphicRatio 1
+ chromaticAberrationRotationDegrees 0
+ chromaticAberrationFieldOnsetPercent 0
+ chromaticAberrationFieldFalloff 2
+ chromaticAberrationAperture 2.8
+ chromaticAberrationAutoCrop true
+ chromaticAberrationOutsideImage Clamp
+ chromaticAberrationLateralEnabled true
+ chromaticAberrationRedRadialShiftUm 4
+ chromaticAberrationBlueRadialShiftUm -4
+ chromaticAberrationRedTangentialShiftUm 0
+ chromaticAberrationBlueTangentialShiftUm 0
+ chromaticAberrationRadialSmearPercent 0
+ chromaticAberrationSmearDecay 1
+ chromaticAberrationAxialEnabled false
+ chromaticAberrationAxialSigmaRgbUm {8 0 12}
+ chromaticAberrationAxialEdgeIncreasePercent 0
+ chromaticAberrationFringeEnabled false
+ chromaticAberrationFringeAmountPercent 35
+ chromaticAberrationFringeThresholdEv 3
+ chromaticAberrationFringeKneeEv 1
+ chromaticAberrationFringeRadiusUm 22
+ chromaticAberrationFringeHueDegrees 285
+ chromaticAberrationFringeSaturationPercent 110
+ chromaticAberrationFringeDirection "Outside Highlights"
+ chromaticAberrationFringeFieldBiasPercent 50
+ "Film Gate" 0
+ filmGateEnabled false
+ filmGateBlackOutside false
+ filmGateAffectDistortion false
+ filmGateAffectVignette false
+ filmGateAffectBokeh false
+ filmGateAffectComa false
+ filmGateFormatPreset "35mm Academy (1.375:1)"
+ filmGateRatio {1.375 1}
+ filmGateRoundedCorners true
+ filmGateRoundedCornerAmount 5
+ filmGateSoftness 0.5
+ filmGatePadding 0
+ "Film Plane" 0
+ filmPlaneEnabled false
+ enlargerScale 1
+ enlargerOffsetXPercent 0
+ enlargerOffsetYPercent 0
+ "Gate Weave" 0
+ gateWeaveEnabled false
+ gateWeaveMode Standard
+ gateWeaveCameraStage true
+ gateWeavePrinterStage true
+ gateWeaveScannerStage true
+ gateWeaveStrength 1
+ gateWeaveFrequency 1
+ gateWeaveGroupAmplitudes true
+ gateWeaveMaxAmplitudeX 0.15
+ gateWeaveMaxAmplitudeY 0.15
+ gateWeaveRotationStrength 0.08
+ gateWeaveAutoCrop true
+ gateWeaveSeed 951679865
+ "Flicker and Breathing" 0
+ flickerBreathingEnabled false
+ flickerPreset "Subtle Camera"
+ flickerControls Simple
+ flickerOrigin Camera
+ flickerAmountEv 0.06
+ flickerFrequencyHz 1
+ flickerBreathingRandomness 55
+ flickerColorEnabled false
+ flickerColorAmountEv 0.03
+ flickerSpatialEnabled false
+ flickerSpatialAmountPercent 35
+ flickerSpatialScalePercent 65
+ breathingEnabled false
+ breathingAmountPercent 0.25
+ breathingFrequencyHz 0.5
+ breathingRandomness 50
+ breathingAutoCrop true
+ flickerSlowDriftMixPercent 30
+ setKnobFlags {flickerSlowDriftMixPercent +HIDDEN}
+ flickerIrregularMixPercent 70
+ setKnobFlags {flickerIrregularMixPercent +HIDDEN}
+ flickerCyclicMixPercent 0
+ setKnobFlags {flickerCyclicMixPercent +HIDDEN}
+ flickerCyclicRateHz 2
+ setKnobFlags {flickerCyclicRateHz +HIDDEN}
+ flickerColorSpeed 0.35
+ setKnobFlags {flickerColorSpeed +HIDDEN}
+ flickerSpatialEvolution 0.5
+ setKnobFlags {flickerSpatialEvolution +HIDDEN}
+ flickerCameraWeightPercent 60
+ setKnobFlags {flickerCameraWeightPercent +HIDDEN}
+ flickerPrinterWeightPercent 25
+ setKnobFlags {flickerPrinterWeightPercent +HIDDEN}
+ flickerScannerWeightPercent 15
+ setKnobFlags {flickerScannerWeightPercent +HIDDEN}
+ flickerSeed 1731580759
+ setKnobFlags {flickerSeed +HIDDEN}
+ "Timing Shift Box" 0
+ timingShiftEnabled false
+ timingShiftPreset "Subtle Down"
+ timingShiftControls Simple
+ timingShiftOffsetDegrees -18
+ timingShiftJitter Off
+ timingShiftMixPercent 100
+ timingShiftHighlightEmphasis false
+ timingShiftEmphasisAmountPercent 50
+ timingShiftShutterAngleDegrees 180
+ setKnobFlags {timingShiftShutterAngleDegrees +HIDDEN}
+ timingShiftJitterRateHz 24
+ setKnobFlags {timingShiftJitterRateHz +HIDDEN}
+ timingShiftHighlightThresholdEv 2
+ setKnobFlags {timingShiftHighlightThresholdEv +HIDDEN}
+ timingShiftHighlightKneeEv 1
+ setKnobFlags {timingShiftHighlightKneeEv +HIDDEN}
+ timingShiftAffectAlpha false
+ setKnobFlags {timingShiftAffectAlpha +HIDDEN}
+ timingShiftSeed 2134845213
+ setKnobFlags {timingShiftSeed +HIDDEN}
+ "Film Damage" 0
+ Dust 0
+ setKnobFlags {Dust +HIDDEN}
+ dustHairsFineSpecksPercent 90
+ dustHairsSpeckSizeUm 9
+ dustHairsDustSizeVariationPercent 70
+ dustHairsDustClusteringPercent 10
+ dustHairsDustClusterSpreadMm 0.6
+ "Dirt / Blotches" 0
+ setKnobFlags {"Dirt / Blotches" +HIDDEN}
+ dustHairsBlotchSizeUm 80
+ dustHairsDirtSizeVariationPercent 55
+ dustHairsDirtIrregularityPercent 55
+ dustHairsDirtClumpingPercent 15
+ dustHairsDirtEdgeBreakupPercent 30
+ Hairs 0
+ setKnobFlags {Hairs +HIDDEN}
+ dustHairsHairLengthMm 4
+ dustHairsHairLengthVariationPercent 55
+ dustHairsHairThicknessUm 35
+ dustHairsHairCurlPercent 40
+ dustHairsHairWavinessPercent 25
+ dustHairsHairHookChancePercent 10
+ dustHairsHairEdgeEntryPercent 35
+ dustHairsHairTaperPercent 45
+ Fibres 0
+ setKnobFlags {Fibres +HIDDEN}
+ dustHairsFibreLengthMm 1.3
+ dustHairsFibreLengthVariationPercent 55
+ dustHairsFibreThicknessUm 12
+ dustHairsFibreCurlPercent 30
+ dustHairsFibreBranchingPercent 15
+ dustHairsFibreEdgeEntryPercent 10
+ Scratches 0
+ setKnobFlags {Scratches +HIDDEN}
+ dustHairsScratchLengthPercent 45
+ dustHairsScratchWidthUm 6
+ dustHairsScratchAngleDegrees 0
+ dustHairsScratchDirectionSpreadDegrees 2
+ dustHairsScratchBrokennessPercent 35
+ dustHairsScratchCurvaturePercent 2
+ dustHairsEnabled false
+ dustHairsPreset "Light Handling"
+ setKnobFlags {dustHairsPreset +HIDDEN}
+ dustHairsControls Simple
+ setKnobFlags {dustHairsControls +HIDDEN}
+ dustHairsMotionStyle "Modern Scan"
+ setKnobFlags {dustHairsMotionStyle +HIDDEN}
+ dustHairsPlane "Mixed Physical Planes"
+ setKnobFlags {dustHairsPlane +HIDDEN}
+ dustHairsLimitToFilmGate true
+ setKnobFlags {dustHairsLimitToFilmGate +HIDDEN}
+ dustHairsDustEnabled true
+ setKnobFlags {dustHairsDustEnabled +HIDDEN}
+ dustHairsDustAmount 1
+ setKnobFlags {dustHairsDustAmount +HIDDEN}
+ dustHairsDirtEnabled true
+ setKnobFlags {dustHairsDirtEnabled +HIDDEN}
+ dustHairsDirtAmount 0.12
+ setKnobFlags {dustHairsDirtAmount +HIDDEN}
+ dustHairsHairsEnabled true
+ setKnobFlags {dustHairsHairsEnabled +HIDDEN}
+ dustHairsHairsAmount 0.03
+ setKnobFlags {dustHairsHairsAmount +HIDDEN}
+ dustHairsFibresEnabled true
+ setKnobFlags {dustHairsFibresEnabled +HIDDEN}
+ dustHairsFibresAmount 0.06
+ setKnobFlags {dustHairsFibresAmount +HIDDEN}
+ dustHairsScratchesEnabled true
+ setKnobFlags {dustHairsScratchesEnabled +HIDDEN}
+ dustHairsScratchesAmount 0.01
+ setKnobFlags {dustHairsScratchesAmount +HIDDEN}
+ dustHairsFrequency 1.5
+ setKnobFlags {dustHairsFrequency +HIDDEN}
+ dustHairsSize 1
+ setKnobFlags {dustHairsSize +HIDDEN}
+ dustHairsTranslucency 0.88
+ setKnobFlags {dustHairsTranslucency +HIDDEN}
+ dustHairsSoftnessUm 20
+ setKnobFlags {dustHairsSoftnessUm +HIDDEN}
+ dustHairsSeed 1619622790
+ setKnobFlags {dustHairsSeed +HIDDEN}
+ "Sprockets and Writing" 0
+ sprocketsWritingEnabled false
+ sprocketPreset "Auto from Film Gate"
+ setKnobFlags {sprocketPreset +HIDDEN}
+ edgeWritingPreset "35mm Keykode / Footage"
+ setKnobFlags {edgeWritingPreset +HIDDEN}
+ edgeWritingPlacement "Auto from Film Gate"
+ setKnobFlags {edgeWritingPlacement +HIDDEN}
+ edgeWritingText SPEKTRAFILM
+ setKnobFlags {edgeWritingText +HIDDEN}
+ edgeWritingOpacity 0.8
+ setKnobFlags {edgeWritingOpacity +HIDDEN}
+ Telecine 0
+ telecineEnabled false
+ telecineMode Standard
+ setKnobFlags {telecineMode +HIDDEN}
+ telecineSystem "Flying-Spot CRT"
+ setKnobFlags {telecineSystem +HIDDEN}
+ telecineScanSoftness 0
+ setKnobFlags {telecineScanSoftness +HIDDEN}
+ telecineChromaBleed 0
+ setKnobFlags {telecineChromaBleed +HIDDEN}
+ telecineFieldBlend 0
+ setKnobFlags {telecineFieldBlend +HIDDEN}
+ Info 0
+ infoVersion 0.4.7
+ infoCreatedBy "Aedan Diez"
+ infoBasedOn "Andrea Volpato & Johannes Hanika"
+ Manage 0
+ Presets 0
+ presetName spektrafilm_preset
+ presetSelection "No presets found"
+ "LUT Export" 0
+ lutSize 65
+ lutDestination User
+ lutIdentifier spektrafilm
+ Backend 0
+ quality Production
+ gpuRenderTiling Auto
+ showRgbCurvesOverlay false
+ quickPresetCategoryId "Clean Slate"
+ quickPresetId "Clean Slate/Clean_Slate.spkpreset"
+ glareSeed 1491007244
+ instanceSchemaVersion 4
+ name spektrafilm1
+ xpos 319
+ ypos 427
+ disable true
+}
+OFXorg.spektrafilm_v0 {
+ "Quick Access" 0
+ quickInputColorSpace ACEScg
+ quickPresetCategory "Clean Slate"
+ quickPresetSelection "Clean Slate"
+ quickFilmFormat 16mm
+ quickGrainEnabled true
+ quickHalationEnabled true
+ quickCameraDiffusionEnabled true
+ quickPrintDiffusionEnabled true
+ "Color Management" 1
+ process "Print simulation"
+ scanNegativeInvert false
+ setKnobFlags {scanNegativeInvert +HIDDEN}
+ negativeScanInput "Cineon / DPX Log Density"
+ setKnobFlags {negativeScanInput +HIDDEN}
+ negativeScanOutput "Display Scan"
+ setKnobFlags {negativeScanOutput +HIDDEN}
+ negativeCalibrationMode "Raw full negative"
+ setKnobFlags {negativeCalibrationMode +HIDDEN}
+ negativeColorImagePolarity "Negative scan"
+ setKnobFlags {negativeColorImagePolarity +HIDDEN}
+ negativeColorImageWorkflow "Print reconstructed negative"
+ setKnobFlags {negativeColorImageWorkflow +HIDDEN}
+ negativeColorScanIlluminant "Profile scan light"
+ setKnobFlags {negativeColorScanIlluminant +HIDDEN}
+ negativeColorScanExposureEv 0
+ setKnobFlags {negativeColorScanExposureEv +HIDDEN}
+ negativeColorBaseDensityScale 1
+ setKnobFlags {negativeColorBaseDensityScale +HIDDEN}
+ negativeColorBaseDensityOffset 0
+ setKnobFlags {negativeColorBaseDensityOffset +HIDDEN}
+ negativeColorBaseBalance {1 1 1}
+ setKnobFlags {negativeColorBaseBalance +HIDDEN}
+ negativeColorMatrixR {1 0 0}
+ setKnobFlags {negativeColorMatrixR +HIDDEN}
+ negativeColorMatrixG {0 1 0}
+ setKnobFlags {negativeColorMatrixG +HIDDEN}
+ negativeColorMatrixB {0 0 1}
+ setKnobFlags {negativeColorMatrixB +HIDDEN}
+ rgbToRawMethod "Arctic 2026"
+ inputColorSpace ACEScg
+ rcmInputColorSpace "DaVinci Intermediate WideGamut"
+ setKnobFlags {rcmInputColorSpace +HIDDEN}
+ outputRole "Display Out SDR"
+ sdrOutputColorSpace sRGB
+ sceneOutputColorSpace "DaVinci Intermediate WideGamut"
+ setKnobFlags {sceneOutputColorSpace +HIDDEN}
+ hdrPreset "PQ 1000"
+ setKnobFlags {hdrPreset +HIDDEN}
+ hdrTransfer "Rec.2100 ST2084 (PQ)"
+ setKnobFlags {hdrTransfer +HIDDEN}
+ hdrReferenceWhiteNits 203
+ setKnobFlags {hdrReferenceWhiteNits +HIDDEN}
+ hdrPeakNits 1000
+ setKnobFlags {hdrPeakNits +HIDDEN}
+ hdrExposureEv 0
+ setKnobFlags {hdrExposureEv +HIDDEN}
+ hdrToneMapping "Hard Clip"
+ setKnobFlags {hdrToneMapping +HIDDEN}
+ rcmFullRange false
+ "Color Adaptation" 1
+ colorAdaptation true
+ colorAdaptationInputCompression true
+ colorAdaptationInputLocusProjection false
+ setKnobFlags {colorAdaptationInputLocusProjection +HIDDEN}
+ colorAdaptationInputSaturationRolloff true
+ colorAdaptationInputSaturationMethod Spectral
+ colorAdaptationInputRolloffAmount 1
+ setKnobFlags {colorAdaptationInputRolloffAmount +HIDDEN}
+ colorAdaptationInputRolloffKnee 0.496
+ colorAdaptationInputGamutInsetScale 0.372
+ colorAdaptationSixPoleHanatosR 0.7300000191
+ colorAdaptationSixPoleHanatosY 0.6090000272
+ colorAdaptationSixPoleHanatosG 0.6299999952
+ colorAdaptationSixPoleHanatosC 2
+ colorAdaptationSixPoleHanatosB 0.6999999881
+ colorAdaptationSixPoleHanatosM 0.7049999833
+ colorAdaptationSixPoleHanatosBridgeRY 0.9150000215
+ colorAdaptationSixPoleHanatosBridgeYG 0.8600000143
+ colorAdaptationSixPoleHanatosBridgeGC 2
+ colorAdaptationSixPoleHanatosBridgeCB 0.7519999743
+ colorAdaptationSixPoleHanatosBridgeBM 0.9549999833
+ colorAdaptationSixPoleHanatosBridgeMR 0.9829999804
+ colorAdaptationSixPoleHanatosWaistR 0
+ colorAdaptationSixPoleHanatosWaistY 0
+ colorAdaptationSixPoleHanatosWaistG 0
+ colorAdaptationSixPoleHanatosWaistC 0
+ colorAdaptationSixPoleHanatosWaistB 0
+ colorAdaptationSixPoleHanatosWaistM 0
+ colorAdaptationSixPoleHanatosWaistCenter 1
+ colorAdaptationSixPoleHanatosWaistWidth 0.349999994
+ colorAdaptationSixPoleHanatosOnset 0.8050000072
+ colorAdaptationSixPoleHanatosShoulder 1
+ colorAdaptationSixPoleHanatosAmount 0.6589999795
+ colorAdaptationSixPoleHanatosEnergyRestoration 1
+ colorAdaptationSixPoleHanatosEnergyLimitEv 1
+ colorAdaptationSixPoleArcticR 0.8809999824
+ colorAdaptationSixPoleArcticY 0.9269999862
+ colorAdaptationSixPoleArcticG 0.5490000248
+ colorAdaptationSixPoleArcticC 0.9940000176
+ colorAdaptationSixPoleArcticB 1.095999956
+ colorAdaptationSixPoleArcticM 1.024000049
+ colorAdaptationSixPoleArcticBridgeRY 1.129999995
+ colorAdaptationSixPoleArcticBridgeYG 1.118000031
+ colorAdaptationSixPoleArcticBridgeGC 1.18599999
+ colorAdaptationSixPoleArcticBridgeCB 1.039000034
+ colorAdaptationSixPoleArcticBridgeBM 0.9829999804
+ colorAdaptationSixPoleArcticBridgeMR 1.004999995
+ colorAdaptationSixPoleArcticWaistR 1
+ colorAdaptationSixPoleArcticWaistY 0.7049999833
+ colorAdaptationSixPoleArcticWaistG 0.3569999933
+ colorAdaptationSixPoleArcticWaistC 0
+ colorAdaptationSixPoleArcticWaistB 1
+ colorAdaptationSixPoleArcticWaistM 1
+ colorAdaptationSixPoleArcticWaistCenter 1.350000024
+ colorAdaptationSixPoleArcticWaistWidth 0.476000011
+ colorAdaptationSixPoleArcticOnset 0.6809999943
+ colorAdaptationSixPoleArcticShoulder 1
+ colorAdaptationSixPoleArcticAmount 0.8450000286
+ colorAdaptationSixPoleArcticEnergyRestoration 1
+ colorAdaptationSixPoleArcticEnergyLimitEv 1
+ colorAdaptationCurveSmoothing false
+ setKnobFlags {colorAdaptationCurveSmoothing +HIDDEN}
+ colorAdaptationOutputLightnessCompression false
+ colorAdaptationOutputChromaCompression false
+ colorAdaptationDirSafety true
+ setKnobFlags {colorAdaptationDirSafety +HIDDEN}
+ colorAdaptationNormalizedStocks false
+ colorAdaptationCleanShadows false
+ colorAdaptationAdvancedColorSafety true
+ colorAdaptationSafetySignedInputRescue true
+ setKnobFlags {colorAdaptationSafetySignedInputRescue +HIDDEN}
+ colorAdaptationSafetyRawFiniteSanitization true
+ setKnobFlags {colorAdaptationSafetyRawFiniteSanitization +HIDDEN}
+ colorAdaptationSafetyRawRatioShoulder true
+ setKnobFlags {colorAdaptationSafetyRawRatioShoulder +HIDDEN}
+ colorAdaptationSafetyFilmMonotoneCurves true
+ setKnobFlags {colorAdaptationSafetyFilmMonotoneCurves +HIDDEN}
+ colorAdaptationSafetyPrintMonotoneCurves true
+ setKnobFlags {colorAdaptationSafetyPrintMonotoneCurves +HIDDEN}
+ colorAdaptationSafetyIncludeDirSafety true
+ setKnobFlags {colorAdaptationSafetyIncludeDirSafety +HIDDEN}
+ colorAdaptationSafetyDisplayRatioGuard true
+ setKnobFlags {colorAdaptationSafetyDisplayRatioGuard +HIDDEN}
+ colorAdaptationSafetyDisplayRatioGuardFloor 0.003
+ setKnobFlags {colorAdaptationSafetyDisplayRatioGuardFloor +HIDDEN}
+ colorAdaptationStockEndpointCalibration true
+ setKnobFlags {colorAdaptationStockEndpointCalibration +HIDDEN}
+ colorAdaptationNormalizedScannerCorrection true
+ setKnobFlags {colorAdaptationNormalizedScannerCorrection +HIDDEN}
+ "Illuminant Transfer" 0
+ illuminantTransferEnabled false
+ illuminantTransferSourceMode "Standard Illuminant"
+ illuminantTransferSource D65
+ illuminantTransferSourceTemperature 6500
+ setKnobFlags {illuminantTransferSourceTemperature +HIDDEN}
+ illuminantTransferTargetMode "Standard Illuminant"
+ illuminantTransferTarget D65
+ illuminantTransferTargetTemperature 6500
+ setKnobFlags {illuminantTransferTargetTemperature +HIDDEN}
+ Pre-Adjustments 0
+ tetraEnabled false
+ tetraMode "RGB Vertex"
+ tetraAnchorReference Common
+ setKnobFlags {tetraAnchorReference +HIDDEN}
+ tetraDomain Input-Encoded
+ setKnobFlags {tetraDomain +HIDDEN}
+ tetraReferenceScaledControls true
+ setKnobFlags {tetraReferenceScaledControls +HIDDEN}
+ tetraAmount 1
+ tetraRedRed 0
+ tetraRedGreen 0
+ tetraRedBlue 0
+ tetraGreenRed 0
+ tetraGreenGreen 0
+ tetraGreenBlue 0
+ tetraBlueRed 0
+ tetraBlueGreen 0
+ tetraBlueBlue 0
+ tetraCyanRed 0
+ tetraCyanGreen 0
+ tetraCyanBlue 0
+ tetraMagentaRed 0
+ tetraMagentaGreen 0
+ tetraMagentaBlue 0
+ tetraYellowRed 0
+ tetraYellowGreen 0
+ tetraYellowBlue 0
+ tetraWhiteRed 0
+ tetraWhiteGreen 0
+ tetraWhiteBlue 0
+ tetraMatrixRR 1
+ tetraMatrixRG 0
+ tetraMatrixRB 0
+ tetraMatrixGR 0
+ tetraMatrixGG 1
+ tetraMatrixGB 0
+ tetraMatrixBR 0
+ tetraMatrixBG 0
+ tetraMatrixBB 1
+ tetraRedHue 0
+ setKnobFlags {tetraRedHue +HIDDEN}
+ tetraRedSaturation 0
+ setKnobFlags {tetraRedSaturation +HIDDEN}
+ tetraRedDensity 0
+ setKnobFlags {tetraRedDensity +HIDDEN}
+ tetraRedLuminance 0
+ setKnobFlags {tetraRedLuminance +HIDDEN}
+ tetraGreenHue 0
+ setKnobFlags {tetraGreenHue +HIDDEN}
+ tetraGreenSaturation 0
+ setKnobFlags {tetraGreenSaturation +HIDDEN}
+ tetraGreenDensity 0
+ setKnobFlags {tetraGreenDensity +HIDDEN}
+ tetraGreenLuminance 0
+ setKnobFlags {tetraGreenLuminance +HIDDEN}
+ tetraBlueHue 0
+ setKnobFlags {tetraBlueHue +HIDDEN}
+ tetraBlueSaturation 0
+ setKnobFlags {tetraBlueSaturation +HIDDEN}
+ tetraBlueDensity 0
+ setKnobFlags {tetraBlueDensity +HIDDEN}
+ tetraBlueLuminance 0
+ setKnobFlags {tetraBlueLuminance +HIDDEN}
+ tetraCyanHue 0
+ setKnobFlags {tetraCyanHue +HIDDEN}
+ tetraCyanSaturation 0
+ setKnobFlags {tetraCyanSaturation +HIDDEN}
+ tetraCyanDensity 0
+ setKnobFlags {tetraCyanDensity +HIDDEN}
+ tetraCyanLuminance 0
+ setKnobFlags {tetraCyanLuminance +HIDDEN}
+ tetraMagentaHue 0
+ setKnobFlags {tetraMagentaHue +HIDDEN}
+ tetraMagentaSaturation 0
+ setKnobFlags {tetraMagentaSaturation +HIDDEN}
+ tetraMagentaDensity 0
+ setKnobFlags {tetraMagentaDensity +HIDDEN}
+ tetraMagentaLuminance 0
+ setKnobFlags {tetraMagentaLuminance +HIDDEN}
+ tetraYellowHue 0
+ setKnobFlags {tetraYellowHue +HIDDEN}
+ tetraYellowSaturation 0
+ setKnobFlags {tetraYellowSaturation +HIDDEN}
+ tetraYellowDensity 0
+ setKnobFlags {tetraYellowDensity +HIDDEN}
+ tetraYellowLuminance 0
+ setKnobFlags {tetraYellowLuminance +HIDDEN}
+ "RGB Vertex Protections" 0
+ tetraLuminanceProtection 0
+ tetraNeutralProtection 0
+ tetraHighlightProtection 0
+ tetraGamutProtection 0
+ setKnobFlags {tetraGamutProtection +HIDDEN}
+ tetraTopologyProtection true
+ Technicolor 1
+ setKnobFlags {Technicolor +HIDDEN}
+ technicolorProcess "Process IV"
+ setKnobFlags {technicolorProcess +HIDDEN}
+ technicolorRendition "Historical Release Print - 1942"
+ setKnobFlags {technicolorRendition +HIDDEN}
+ technicolorPreview "Final Projection / Scan"
+ setKnobFlags {technicolorPreview +HIDDEN}
+ "Camera & Color Separation" 1
+ setKnobFlags {"Camera & Color Separation" +HIDDEN}
+ technicolorStockPreset "Historical Best Guess - Daylight"
+ setKnobFlags {technicolorStockPreset +HIDDEN}
+ technicolorCameraStock1 "Eastman 1231 Plus-X Panchromatic"
+ setKnobFlags {technicolorCameraStock1 +HIDDEN}
+ technicolorCameraStock2 "Eastman 1231 Plus-X Panchromatic"
+ setKnobFlags {technicolorCameraStock2 +HIDDEN}
+ technicolorCameraStock3 "Eastman 1231 Plus-X Panchromatic"
+ setKnobFlags {technicolorCameraStock3 +HIDDEN}
+ technicolorIPositiveStock1 "Period Parametric Positive Reconstruction"
+ setKnobFlags {technicolorIPositiveStock1 +HIDDEN}
+ technicolorIPositiveStock2 "Period Parametric Positive Reconstruction"
+ setKnobFlags {technicolorIPositiveStock2 +HIDDEN}
+ technicolorIvCapturePreset "Daylight 1942 - 1234 / 1235-D / 1232-D"
+ setKnobFlags {technicolorIvCapturePreset +HIDDEN}
+ technicolorIvFilterSet "Wratten 32 + 58"
+ setKnobFlags {technicolorIvFilterSet +HIDDEN}
+ technicolorBipackRearLightLoss 0
+ setKnobFlags {technicolorBipackRearLightLoss +HIDDEN}
+ technicolorTwoColorFilterSet "Wratten 25 + 44 Blue-Green Reconstruction"
+ setKnobFlags {technicolorTwoColorFilterSet +HIDDEN}
+ technicolorVCameraNegative "Eastman Color Negative 5247 (Early Process V)"
+ setKnobFlags {technicolorVCameraNegative +HIDDEN}
+ technicolorVSeparationMethod "Panchromatic Matrix + Wratten 25 / 58 / 47 Reconstruction"
+ setKnobFlags {technicolorVSeparationMethod +HIDDEN}
+ technicolorCameraExposureEv 0
+ setKnobFlags {technicolorCameraExposureEv +HIDDEN}
+ technicolorRecordExposureRgb {0 0 0}
+ setKnobFlags {technicolorRecordExposureRgb +HIDDEN}
+ technicolorTwoColorRecordExposureRg {0 0}
+ setKnobFlags {technicolorTwoColorRecordExposureRg +HIDDEN}
+ technicolorIPositiveExposureRg {0 0}
+ setKnobFlags {technicolorIPositiveExposureRg +HIDDEN}
+ technicolorIPositiveContrast 2.369999886
+ setKnobFlags {technicolorIPositiveContrast +HIDDEN}
+ technicolorIPositiveDminRg {0.1299999952 0.1299999952}
+ setKnobFlags {technicolorIPositiveDminRg +HIDDEN}
+ technicolorIPositiveDensityRg {3 3}
+ setKnobFlags {technicolorIPositiveDensityRg +HIDDEN}
+ technicolorIPositiveBlackDensityRg {2.549999952 2.549999952}
+ setKnobFlags {technicolorIPositiveBlackDensityRg +HIDDEN}
+ technicolorIProjectionBalanceRg {0 0}
+ setKnobFlags {technicolorIProjectionBalanceRg +HIDDEN}
+ "Separation Records" 0
+ setKnobFlags {"Separation Records" +HIDDEN}
+ technicolorNegativeDevelopment "Linked Gamma 0.65 (Measured H&D)"
+ setKnobFlags {technicolorNegativeDevelopment +HIDDEN}
+ technicolorSeparationDevelopmentTime "Profile Default"
+ setKnobFlags {technicolorSeparationDevelopmentTime +HIDDEN}
+ technicolorSeparationGammaRgb {1 1 1}
+ setKnobFlags {technicolorSeparationGammaRgb +HIDDEN}
+ technicolorSeparationDminRgb {0 0 0}
+ setKnobFlags {technicolorSeparationDminRgb +HIDDEN}
+ technicolorSeparationDmaxRgb {1 1 1}
+ setKnobFlags {technicolorSeparationDmaxRgb +HIDDEN}
+ "Matrix Formation" 0
+ setKnobFlags {"Matrix Formation" +HIDDEN}
+ technicolorMatrixModel "Staged Tanning-Relief Matrix"
+ setKnobFlags {technicolorMatrixModel +HIDDEN}
+ technicolorTwoColorMatrixExposureRg {3.200000048 3.5}
+ setKnobFlags {technicolorTwoColorMatrixExposureRg +HIDDEN}
+ technicolorTwoColorMatrixFlashRg {0 0}
+ setKnobFlags {technicolorTwoColorMatrixFlashRg +HIDDEN}
+ technicolorTwoColorMatrixContrast 1
+ setKnobFlags {technicolorTwoColorMatrixContrast +HIDDEN}
+ technicolorTwoColorMatrixToe 0
+ setKnobFlags {technicolorTwoColorMatrixToe +HIDDEN}
+ technicolorTwoColorMatrixShoulder 0
+ setKnobFlags {technicolorTwoColorMatrixShoulder +HIDDEN}
+ technicolorTwoColorReliefDepthRg {1 1}
+ setKnobFlags {technicolorTwoColorReliefDepthRg +HIDDEN}
+ technicolorProcessIiiFlashThresholdRg {0 0}
+ setKnobFlags {technicolorProcessIiiFlashThresholdRg +HIDDEN}
+ technicolorProcessIiiReliefPrinterStrength 0.6499999762
+ setKnobFlags {technicolorProcessIiiReliefPrinterStrength +HIDDEN}
+ technicolorMatrixExposureCmy {2.233700037 2.650000095 2.552400112}
+ setKnobFlags {technicolorMatrixExposureCmy +HIDDEN}
+ technicolorVMatrixExposureCmy {0 0 0}
+ setKnobFlags {technicolorVMatrixExposureCmy +HIDDEN}
+ technicolorMatrixFlashCmy {0 0 0}
+ setKnobFlags {technicolorMatrixFlashCmy +HIDDEN}
+ technicolorMatrixContrast 1.200000048
+ setKnobFlags {technicolorMatrixContrast +HIDDEN}
+ technicolorMatrixToe 0
+ setKnobFlags {technicolorMatrixToe +HIDDEN}
+ technicolorMatrixShoulder 0
+ setKnobFlags {technicolorMatrixShoulder +HIDDEN}
+ technicolorReliefDepthCmy {1 1 1}
+ setKnobFlags {technicolorReliefDepthCmy +HIDDEN}
+ "Dye Transfer" 0
+ setKnobFlags {"Dye Transfer" +HIDDEN}
+ technicolorDyeSet "Process IV - NSMM 12593 Y/C/M Wedge"
+ setKnobFlags {technicolorDyeSet +HIDDEN}
+ technicolorTwoColorDyeDensityRg {2.299999952 0.8500000238}
+ setKnobFlags {technicolorTwoColorDyeDensityRg +HIDDEN}
+ technicolorTwoColorDyeSet "Measured Process III - NSMM 12453"
+ setKnobFlags {technicolorTwoColorDyeSet +HIDDEN}
+ technicolorTwoColorDyeYellowMix {0.07500000298 1.5}
+ setKnobFlags {technicolorTwoColorDyeYellowMix +HIDDEN}
+ technicolorTwoColorWashbackContrastRg {1 1}
+ setKnobFlags {technicolorTwoColorWashbackContrastRg +HIDDEN}
+ technicolorProcessIiiWashbackStrengthRg {0.6499999762 0.6499999762}
+ setKnobFlags {technicolorProcessIiiWashbackStrengthRg +HIDDEN}
+ technicolorProcessIiiSecondBath "Same Dye Re-Dye"
+ setKnobFlags {technicolorProcessIiiSecondBath +HIDDEN}
+ technicolorProcessIiiSecondBathAmount 0.75
+ setKnobFlags {technicolorProcessIiiSecondBathAmount +HIDDEN}
+ technicolorProcessIiiSecondBathSelectivity 1
+ setKnobFlags {technicolorProcessIiiSecondBathSelectivity +HIDDEN}
+ technicolorTwoColorWashbackRetentionRg {1 1}
+ setKnobFlags {technicolorTwoColorWashbackRetentionRg +HIDDEN}
+ technicolorTwoColorContactTransferRg {1 1}
+ setKnobFlags {technicolorTwoColorContactTransferRg +HIDDEN}
+ technicolorProcessIiiContactTimeMinutes 5.5
+ setKnobFlags {technicolorProcessIiiContactTimeMinutes +HIDDEN}
+ technicolorProcessIiiDiffusionRate 4
+ setKnobFlags {technicolorProcessIiiDiffusionRate +HIDDEN}
+ technicolorColorCorrection "Measured Dyes Only"
+ setKnobFlags {technicolorColorCorrection +HIDDEN}
+ technicolorDyeTransferAmount 1.350000024
+ setKnobFlags {technicolorDyeTransferAmount +HIDDEN}
+ technicolorDyeDensityCmy {1 1 1}
+ setKnobFlags {technicolorDyeDensityCmy +HIDDEN}
+ technicolorDyeTransferGammaCmy {1.5 1.5 1.5}
+ setKnobFlags {technicolorDyeTransferGammaCmy +HIDDEN}
+ technicolorWashbackRetentionCmy {1 1 1}
+ setKnobFlags {technicolorWashbackRetentionCmy +HIDDEN}
+ technicolorContactTransferCmy {1 1 1}
+ setKnobFlags {technicolorContactTransferCmy +HIDDEN}
+ Receiver 0
+ setKnobFlags {Receiver +HIDDEN}
+ technicolorReceiverPreset "Independent Spectral Dye Deposits"
+ setKnobFlags {technicolorReceiverPreset +HIDDEN}
+ technicolorReceiverBaseDensity 0
+ setKnobFlags {technicolorReceiverBaseDensity +HIDDEN}
+ technicolorReceiverBaseTintCmy {0 0 0}
+ setKnobFlags {technicolorReceiverBaseTintCmy +HIDDEN}
+ technicolorThreeColorReceiverCapacity 4.050000191
+ setKnobFlags {technicolorThreeColorReceiverCapacity +HIDDEN}
+ technicolorThreeColorReceiverRewetAfterYellow 1
+ setKnobFlags {technicolorThreeColorReceiverRewetAfterYellow +HIDDEN}
+ technicolorThreeColorReceiverRewetAfterCyan 1
+ setKnobFlags {technicolorThreeColorReceiverRewetAfterCyan +HIDDEN}
+ technicolorReceiverDensityScale 1
+ setKnobFlags {technicolorReceiverDensityScale +HIDDEN}
+ technicolorProcessIiiReceiverCapacity 1.600000024
+ setKnobFlags {technicolorProcessIiiReceiverCapacity +HIDDEN}
+ technicolorProcessIiiReceiverRewetting 0.8999999762
+ setKnobFlags {technicolorProcessIiiReceiverRewetting +HIDDEN}
+ technicolorProcessIiiTransferOrder "Production: Blue-Green then Red-Orange"
+ setKnobFlags {technicolorProcessIiiTransferOrder +HIDDEN}
+ technicolorIiSupportDensity 0.06
+ setKnobFlags {technicolorIiSupportDensity +HIDDEN}
+ technicolorNeutralCalibration true
+ setKnobFlags {technicolorNeutralCalibration +HIDDEN}
+ technicolorSilverKeyEnabled true
+ setKnobFlags {technicolorSilverKeyEnabled +HIDDEN}
+ technicolorSilverKeyMode "Current Shared-Separation Key"
+ setKnobFlags {technicolorSilverKeyMode +HIDDEN}
+ technicolorSilverKeyDensity 0.5
+ setKnobFlags {technicolorSilverKeyDensity +HIDDEN}
+ technicolorNeutralTrimCmy {0 0 0}
+ setKnobFlags {technicolorNeutralTrimCmy +HIDDEN}
+ "Image Structure" 0
+ setKnobFlags {"Image Structure" +HIDDEN}
+ technicolorImageStructurePreset "35mm Production"
+ setKnobFlags {technicolorImageStructurePreset +HIDDEN}
+ technicolorMtfEnabled true
+ setKnobFlags {technicolorMtfEnabled +HIDDEN}
+ technicolorRecordMtf50Rgb {28 48 36}
+ setKnobFlags {technicolorRecordMtf50Rgb +HIDDEN}
+ technicolorGrainEnabled false
+ setKnobFlags {technicolorGrainEnabled +HIDDEN}
+ technicolorGrainAmount 1
+ setKnobFlags {technicolorGrainAmount +HIDDEN}
+ technicolorGrainSize 1
+ setKnobFlags {technicolorGrainSize +HIDDEN}
+ technicolorGrainBalanceRgb {8 8 8}
+ setKnobFlags {technicolorGrainBalanceRgb +HIDDEN}
+ technicolorGrainSeed 0
+ setKnobFlags {technicolorGrainSeed +HIDDEN}
+ technicolorRegistrationEnabled false
+ setKnobFlags {technicolorRegistrationEnabled +HIDDEN}
+ technicolorCyanRegistrationUm {0 0}
+ setKnobFlags {technicolorCyanRegistrationUm +HIDDEN}
+ technicolorMagentaRegistrationUm {0 0}
+ setKnobFlags {technicolorMagentaRegistrationUm +HIDDEN}
+ technicolorYellowRegistrationUm {0 0}
+ setKnobFlags {technicolorYellowRegistrationUm +HIDDEN}
+ technicolorRegistrationSoftnessUm 0
+ setKnobFlags {technicolorRegistrationSoftnessUm +HIDDEN}
+ technicolorSpatialDyeSpreadCmyUm {8 8 8}
+ setKnobFlags {technicolorSpatialDyeSpreadCmyUm +HIDDEN}
+ technicolorSpatialMordantBinding 0.75
+ setKnobFlags {technicolorSpatialMordantBinding +HIDDEN}
+ technicolorSpatialRewetMobility 0.25
+ setKnobFlags {technicolorSpatialRewetMobility +HIDDEN}
+ Filtering 0
+ cameraUvFilterEnabled false
+ cameraUvCutNm 416
+ cameraIrFilterEnabled false
+ cameraIrCutNm 655
+ cameraWrattenFilter1 None
+ cameraWrattenFilter2 None
+ cameraHoyaColorFilter1 None
+ cameraHoyaColorFilter2 None
+ cameraHeliopanFilter1 None
+ cameraHeliopanFilter2 None
+ cameraColorFilter None
+ cameraHoyaBwFilter2 None
+ cameraWrattenIrFilter1 None
+ cameraWrattenIrFilter2 None
+ cameraNdFilter None
+ cameraFilterExposureCompensation true
+ Film 1
+ filmCategory "Still Film"
+ film "Fujifilm X-Tra 400"
+ filmProfileId 1016
+ filmDevelopmentTime "Profile Default"
+ setKnobFlags {filmDevelopmentTime +HIDDEN}
+ filmFormat 16mm
+ filmPushPullMode Standard
+ filmPushPullStops -2
+ negativeBleachBypassModel "Subtle Neutral"
+ negativeBleachBypassAmount 0
+ negativeLeucoCyanCoupling 1
+ setKnobFlags {negativeLeucoCyanCoupling +HIDDEN}
+ useCurrentDensity true
+ setKnobFlags {useCurrentDensity +HIDDEN}
+ adaptiveExposureCaptureEi Manual
+ setKnobFlags {adaptiveExposureCaptureEi +HIDDEN}
+ filmExposureEv -3.7
+ autoExposure false
+ setKnobFlags {autoExposure +HIDDEN}
+ autoExposureMethod "Center weighted"
+ setKnobFlags {autoExposureMethod +HIDDEN}
+ filmGamma 1
+ setKnobFlags {filmGamma +HIDDEN}
+ "DIR Couplers" 1
+ dirAmount 0.5
+ dirStrength 1
+ dirSafeControlEnvelope true
+ setKnobFlags {dirSafeControlEnvelope +HIDDEN}
+ dirInhibitionSameLayer 1.39
+ dirInhibitionInterlayer 1.74
+ "DIR Sharpening" 1
+ dirAllowDiffusionWithoutHalation false
+ dirDiffusionUm 20
+ dirDiffusionTailUm 200
+ dirDiffusionTailWeight 0.03
+ Tonality 0
+ dirLockGammas false
+ dirGammaSameLayerRgb {0.5159000158 0.5934000015 0.2829000056}
+ setKnobFlags {dirGammaSameLayerRgb +HIDDEN}
+ dirGammaRToGb {0.4032000005 0.2487999946}
+ dirGammaGToRb {0.2226999998 0.4339999855}
+ dirGammaBToRg {0.1828999966 0.1799000055}
+ dirGammaMode Current
+ dirDonorLangmuirK {1 1 1}
+ setKnobFlags {dirDonorLangmuirK +HIDDEN}
+ dirReceiverLangmuirK {1 1 1}
+ setKnobFlags {dirReceiverLangmuirK +HIDDEN}
+ Print 1
+ printCategory "Still Film"
+ paper "Kodak Professional Endura Premier"
+ paperProfileId 2001
+ printDevelopmentTime "Profile Default"
+ setKnobFlags {printDevelopmentTime +HIDDEN}
+ printTiming "Filtered Enlarger"
+ printPushPullStops 0.28
+ printBleachBypassModel "Stock Character"
+ printBleachBypassAmount 0.11
+ printExposureEv -1.75
+ printGamma 1
+ setKnobFlags {printGamma +HIDDEN}
+ printShadowShape -0.34
+ printHighlightShape -0.74
+ filterC 5
+ filterMShift -3
+ filterYShift 0
+ preflashExposure 0.05
+ preflashMFilterShift 20
+ preflashYFilterShift -41.5
+ printerLightsGang false
+ setKnobFlags {printerLightsGang +HIDDEN}
+ printerLightsGroup false
+ setKnobFlags {printerLightsGroup +HIDDEN}
+ printerLightR 0
+ setKnobFlags {printerLightR +HIDDEN}
+ printerLightG 0
+ setKnobFlags {printerLightG +HIDDEN}
+ printerLightB 0
+ setKnobFlags {printerLightB +HIDDEN}
+ printerLightCalibration true
+ "Advanced Film Chemistry" 1
+ filmChemistryActive true
+ filmChemistryMode Standard
+ filmChemistryGammaFactor 1
+ filmChemistryGammaFactorFast 1
+ filmChemistryGammaFactorSlow 1
+ filmChemistryGammaFactorRed 1
+ filmChemistryGammaFactorRedFast 1
+ setKnobFlags {filmChemistryGammaFactorRedFast +HIDDEN}
+ filmChemistryGammaFactorRedMedium 1
+ setKnobFlags {filmChemistryGammaFactorRedMedium +HIDDEN}
+ filmChemistryGammaFactorRedSlow 1
+ setKnobFlags {filmChemistryGammaFactorRedSlow +HIDDEN}
+ filmChemistryGammaFactorGreen 1
+ filmChemistryGammaFactorGreenFast 1
+ setKnobFlags {filmChemistryGammaFactorGreenFast +HIDDEN}
+ filmChemistryGammaFactorGreenMedium 1
+ setKnobFlags {filmChemistryGammaFactorGreenMedium +HIDDEN}
+ filmChemistryGammaFactorGreenSlow 1
+ setKnobFlags {filmChemistryGammaFactorGreenSlow +HIDDEN}
+ filmChemistryGammaFactorBlue 1
+ filmChemistryGammaFactorBlueFast 1
+ setKnobFlags {filmChemistryGammaFactorBlueFast +HIDDEN}
+ filmChemistryGammaFactorBlueMedium 1
+ setKnobFlags {filmChemistryGammaFactorBlueMedium +HIDDEN}
+ filmChemistryGammaFactorBlueSlow 1
+ setKnobFlags {filmChemistryGammaFactorBlueSlow +HIDDEN}
+ filmChemistryDeveloperExhaustion 0
+ "Advanced Print Chemistry" 1
+ printCurveSource "Parametric Curves"
+ setKnobFlags {printCurveSource +HIDDEN}
+ printChemistryActive true
+ printChemistryMode Standard
+ printChemistryGammaFactor 1
+ printChemistryGammaFactorFast 1
+ printChemistryGammaFactorSlow 1
+ printChemistryGammaFactorRed 1
+ printChemistryGammaFactorRedFast 1
+ setKnobFlags {printChemistryGammaFactorRedFast +HIDDEN}
+ printChemistryGammaFactorRedMedium 1
+ setKnobFlags {printChemistryGammaFactorRedMedium +HIDDEN}
+ printChemistryGammaFactorRedSlow 1
+ setKnobFlags {printChemistryGammaFactorRedSlow +HIDDEN}
+ printChemistryGammaFactorGreen 1
+ printChemistryGammaFactorGreenFast 1
+ setKnobFlags {printChemistryGammaFactorGreenFast +HIDDEN}
+ printChemistryGammaFactorGreenMedium 1
+ setKnobFlags {printChemistryGammaFactorGreenMedium +HIDDEN}
+ printChemistryGammaFactorGreenSlow 1
+ setKnobFlags {printChemistryGammaFactorGreenSlow +HIDDEN}
+ printChemistryGammaFactorBlue 1
+ printChemistryGammaFactorBlueFast 1
+ setKnobFlags {printChemistryGammaFactorBlueFast +HIDDEN}
+ printChemistryGammaFactorBlueMedium 1
+ setKnobFlags {printChemistryGammaFactorBlueMedium +HIDDEN}
+ printChemistryGammaFactorBlueSlow 1
+ setKnobFlags {printChemistryGammaFactorBlueSlow +HIDDEN}
+ printChemistryDeveloperExhaustion 0
+ printPaperDensityRangeActive true
+ printPaperFogDensity 0.03
+ printPaperBaseDensityOffset -0.016
+ printPaperDmaxScale 1.045
+ Grain 1
+ grainEnabled true
+ grainModel RMS
+ grainAmount 1
+ grainSaturation 0.075
+ grainSublayersEnabled true
+ grainSubLayerCount 1
+ grainRmsMultiplier 0.74
+ grainRmsGranularity {6 8 10}
+ setKnobFlags {grainRmsGranularity +HIDDEN}
+ grainMultiplicativeUsmSigma 0.7
+ setKnobFlags {grainMultiplicativeUsmSigma +HIDDEN}
+ grainMultiplicativeUsmAmount 1.5
+ setKnobFlags {grainMultiplicativeUsmAmount +HIDDEN}
+ grainParticleAreaUm2 0.1
+ setKnobFlags {grainParticleAreaUm2 +HIDDEN}
+ grainParticleScale {1.200000048 1 2.5}
+ setKnobFlags {grainParticleScale +HIDDEN}
+ grainParticleScaleLayers {6 1 0.400000006}
+ setKnobFlags {grainParticleScaleLayers +HIDDEN}
+ grainDensityMin {0.03999999911 0.05000000075 0.05999999866}
+ setKnobFlags {grainDensityMin +HIDDEN}
+ grainUniformity {0.9900000095 0.9700000286 0.9800000191}
+ setKnobFlags {grainUniformity +HIDDEN}
+ grainFinalBlurUm 7.17
+ setKnobFlags {grainFinalBlurUm +HIDDEN}
+ grainBlurDyeCloudsUm 1
+ grainMicroStructure {0.2 30}
+ grainSeed 956284
+ grainAnimate true
+ Halation 1
+ halationEnabled true
+ scatterAmount 0.43
+ scatterScale 1
+ halationAmount 1
+ halationScale 1
+ halationBoostEv 0
+ halationBoostRange 0.3
+ halationProtectEv 4
+ halationStrength {0.05000000075 0.01499999966 0}
+ halationDirSharpening true
+ Diffusion 1
+ cameraDiffusionEnabled true
+ cameraDiffusionFamily Pro-Mist
+ cameraDiffusionStrength 2
+ cameraDiffusionSpatialScale 1.66
+ cameraDiffusionHaloWarmth -0.91
+ cameraDiffusionCoreIntensity 2.56
+ cameraDiffusionCoreSize 0.86
+ cameraDiffusionHaloIntensity 0.68
+ cameraDiffusionHaloSize 0.1
+ cameraDiffusionBloomIntensity 0.54
+ cameraDiffusionBloomSize 2.4
+ printDiffusionEnabled true
+ printDiffusionFamily CineBloom
+ printDiffusionStrength 0.18
+ printDiffusionSpatialScale 0.42
+ printDiffusionHaloWarmth 0.34
+ printDiffusionCoreIntensity 0.68
+ printDiffusionCoreSize 0.7
+ printDiffusionHaloIntensity 0.6
+ printDiffusionHaloSize 0.7
+ printDiffusionBloomIntensity 0.62
+ printDiffusionBloomSize 0.54
+ Scanner 1
+ scannerEnabled true
+ scannerWhiteCorrection false
+ scannerBlackCorrection false
+ scannerWhiteLevel 0.98
+ scannerBlackLevel 0.01
+ glarePercent 0.03
+ glareRoughness 0.7
+ glareBlur 0.5
+ glareAnimate false
+ scannerMtf50LpMm 60
+ scannerUnsharpRadiusUm 10.5
+ scannerUnsharpAmount 1.88
+ Effects 1
+ quickLensDistortionEnabled false
+ quickLensDistortionPreset "Modern Corrected"
+ quickVignetteEnabled false
+ quickVignettePreset "Soft Artistic"
+ quickBokehEnabled false
+ quickBokehPreset "Soft Circular"
+ quickComaEnabled false
+ quickComaPreset "Subtle Edge Coma"
+ quickChromaticAberrationEnabled false
+ quickChromaticAberrationPreset "Subtle Lateral"
+ quickFilmGateEnabled false
+ quickFilmGateFormatPreset "35mm Academy (1.375:1)"
+ quickFilmPlaneEnabled false
+ quickGateWeaveEnabled false
+ quickFlickerEnabled false
+ quickFlickerPreset "Subtle Camera"
+ quickTimingShiftEnabled false
+ quickTimingShiftPreset "Subtle Down"
+ quickFilmDamageEnabled false
+ setKnobFlags {quickFilmDamageEnabled +HIDDEN}
+ quickFilmDamagePreset "Light Handling"
+ setKnobFlags {quickFilmDamagePreset +HIDDEN}
+ "Lens Distortion" 0
+ lensDistortionEnabled false
+ lensDistortionPreset "Modern Corrected"
+ lensDistortionModel Spherical
+ lensDistortionControls Creative
+ lensDistortionAmountPercent 100
+ lensDistortionCenter {0 0}
+ lensDistortionDecenteringEnabled false
+ lensDistortionTangentialPercent {0 0}
+ lensDistortionAutoCrop true
+ lensDistortionOutsideImage Black
+ lensDistortionAffectAlpha false
+ lensDistortionRadialPercent -0.2
+ lensDistortionMoustachePercent 0.05
+ lensDistortionSphericalCoefficients {0 0 0}
+ setKnobFlags {lensDistortionSphericalCoefficients +HIDDEN}
+ lensDistortionAnamorphicRatio 2
+ setKnobFlags {lensDistortionAnamorphicRatio +HIDDEN}
+ lensDistortionRotationDegrees 0
+ setKnobFlags {lensDistortionRotationDegrees +HIDDEN}
+ lensDistortionAnamorphicDistortionPercent {-0.8 -0.2}
+ setKnobFlags {lensDistortionAnamorphicDistortionPercent +HIDDEN}
+ lensDistortionAnamorphicMoustachePercent {0 0}
+ setKnobFlags {lensDistortionAnamorphicMoustachePercent +HIDDEN}
+ lensDistortionCrossCouplingPercent 0
+ setKnobFlags {lensDistortionCrossCouplingPercent +HIDDEN}
+ lensDistortionSqueezeVariationPercent 0
+ setKnobFlags {lensDistortionSqueezeVariationPercent +HIDDEN}
+ lensDistortionLinearScale {1 1}
+ setKnobFlags {lensDistortionLinearScale +HIDDEN}
+ lensDistortionDegree2Self {0 0}
+ setKnobFlags {lensDistortionDegree2Self +HIDDEN}
+ lensDistortionDegree2Cross {0 0}
+ setKnobFlags {lensDistortionDegree2Cross +HIDDEN}
+ lensDistortionDegree4 {0 0}
+ setKnobFlags {lensDistortionDegree4 +HIDDEN}
+ lensDistortionFisheyeProjection Equidistant
+ setKnobFlags {lensDistortionFisheyeProjection +HIDDEN}
+ lensDistortionFocalLengthMm 12
+ setKnobFlags {lensDistortionFocalLengthMm +HIDDEN}
+ lensDistortionImageCircle false
+ setKnobFlags {lensDistortionImageCircle +HIDDEN}
+ lensDistortionMaximumFovDegrees 180
+ setKnobFlags {lensDistortionMaximumFovDegrees +HIDDEN}
+ lensDistortionFisheyeResidualPercent 0
+ setKnobFlags {lensDistortionFisheyeResidualPercent +HIDDEN}
+ lensDistortionFisheyeMoustachePercent 0
+ setKnobFlags {lensDistortionFisheyeMoustachePercent +HIDDEN}
+ lensDistortionThetaK12 {0 0}
+ setKnobFlags {lensDistortionThetaK12 +HIDDEN}
+ lensDistortionThetaK34 {0 0}
+ setKnobFlags {lensDistortionThetaK34 +HIDDEN}
+ Vignette 0
+ vignetteEnabled false
+ vignettePreset "Soft Artistic"
+ vignetteModel Artistic
+ vignetteAmountPercent 100
+ vignetteCenter {0 0}
+ vignetteAnamorphicRatio 1
+ vignetteRotationDegrees 0
+ vignetteRoundness 2
+ vignetteFocalLengthMm 50
+ setKnobFlags {vignetteFocalLengthMm +HIDDEN}
+ vignetteAperture 2.8
+ setKnobFlags {vignetteAperture +HIDDEN}
+ vignetteNaturalFalloffPercent 75
+ setKnobFlags {vignetteNaturalFalloffPercent +HIDDEN}
+ vignetteMechanicalEnabled true
+ setKnobFlags {vignetteMechanicalEnabled +HIDDEN}
+ vignetteMechanicalDarkeningStops 0.2
+ setKnobFlags {vignetteMechanicalDarkeningStops +HIDDEN}
+ vignetteMechanicalOnsetPercent 72
+ setKnobFlags {vignetteMechanicalOnsetPercent +HIDDEN}
+ vignetteMechanicalSoftnessPercent 24
+ setKnobFlags {vignetteMechanicalSoftnessPercent +HIDDEN}
+ vignetteArtisticEdgeDarkeningStops 0.75
+ vignetteArtisticMidpointPercent 45
+ vignetteArtisticSoftnessPercent 45
+ vignetteArtisticCurve 1.5
+ vignetteColorShadingEnabled false
+ vignetteColorShadingStops {0 0 0}
+ vignetteColorShadingOnsetPercent 50
+ vignetteColorShadingSoftnessPercent 40
+ Bokeh 0
+ bokehEnabled false
+ bokehPreset "Soft Circular"
+ bokehAmountPercent 100
+ bokehCenterDefocusUm 0
+ bokehEdgeDefocusUm 60
+ bokehCenter {0 0}
+ bokehFieldOnsetPercent 15
+ bokehFieldFalloff 1.75
+ bokehAnamorphicRatio 1
+ bokehApertureBlades 0
+ bokehBladeCurvaturePercent 100
+ bokehApertureRotationDegrees 0
+ bokehEdgeSoftnessPercent 8
+ bokehRimBiasPercent 0
+ bokehCatEyeEnabled false
+ bokehCatEyeAmountPercent 35
+ bokehCatEyeOnsetPercent 55
+ bokehCatEyeSoftnessPercent 25
+ bokehSwirlEnabled false
+ bokehSwirlModel "Aspect Stretch"
+ bokehSwirlAmountPercent 50
+ bokehSwirlOnsetPercent 35
+ bokehSwirlFalloff 2
+ bokehPetzvalControls Simple
+ setKnobFlags {bokehPetzvalControls +HIDDEN}
+ bokehPetzvalAmountPercent 100
+ setKnobFlags {bokehPetzvalAmountPercent +HIDDEN}
+ bokehPetzvalEdgeAstigmatismUm 30
+ setKnobFlags {bokehPetzvalEdgeAstigmatismUm +HIDDEN}
+ bokehPetzvalOnsetPercent 0
+ setKnobFlags {bokehPetzvalOnsetPercent +HIDDEN}
+ bokehPetzvalFalloff 2
+ setKnobFlags {bokehPetzvalFalloff +HIDDEN}
+ bokehPetzvalExtremeQuality false
+ setKnobFlags {bokehPetzvalExtremeQuality +HIDDEN}
+ bokehHighlightResponse Automatic
+ bokehHighlightThresholdEv 3
+ setKnobFlags {bokehHighlightThresholdEv +HIDDEN}
+ bokehHighlightKneeEv 1
+ setKnobFlags {bokehHighlightKneeEv +HIDDEN}
+ bokehHighlightGainStops 0.5
+ setKnobFlags {bokehHighlightGainStops +HIDDEN}
+ bokehAffectAlpha false
+ bokehOutsideImage Renormalize
+ Coma 0
+ comaEnabled false
+ comaPreset "Subtle Edge Coma"
+ comaAmountPercent 100
+ comaEdgeStrengthUm 12
+ comaAperture 2.8
+ comaFieldOnsetPercent 15
+ comaFieldFalloff 1.5
+ comaDirection Outward
+ comaOrientationDegrees 0
+ comaTangentialSpreadPercent 100
+ comaPreserveImagePosition true
+ comaChromaticEnabled false
+ comaChromaticScaleRgbPercent {100 100 100}
+ comaCenter {0 0}
+ comaAnamorphicRatio 1
+ comaApertureBlades 0
+ comaBladeCurvaturePercent 100
+ comaApertureRotationDegrees 0
+ comaEdgeSoftnessPercent 8
+ comaRimBiasPercent 0
+ comaCatEyeEnabled false
+ comaCatEyeAmountPercent 35
+ comaCatEyeOnsetPercent 55
+ comaCatEyeSoftnessPercent 25
+ comaAffectAlpha false
+ comaOutsideImage Renormalize
+ "Chromatic Aberration" 0
+ chromaticAberrationEnabled false
+ chromaticAberrationPreset "Subtle Lateral"
+ chromaticAberrationAmountPercent 100
+ chromaticAberrationCenter {0 0}
+ chromaticAberrationAnamorphicRatio 1
+ chromaticAberrationRotationDegrees 0
+ chromaticAberrationFieldOnsetPercent 0
+ chromaticAberrationFieldFalloff 2
+ chromaticAberrationAperture 2.8
+ chromaticAberrationAutoCrop true
+ chromaticAberrationOutsideImage Clamp
+ chromaticAberrationLateralEnabled true
+ chromaticAberrationRedRadialShiftUm 4
+ chromaticAberrationBlueRadialShiftUm -4
+ chromaticAberrationRedTangentialShiftUm 0
+ chromaticAberrationBlueTangentialShiftUm 0
+ chromaticAberrationRadialSmearPercent 0
+ chromaticAberrationSmearDecay 1
+ chromaticAberrationAxialEnabled false
+ chromaticAberrationAxialSigmaRgbUm {8 0 12}
+ chromaticAberrationAxialEdgeIncreasePercent 0
+ chromaticAberrationFringeEnabled false
+ chromaticAberrationFringeAmountPercent 35
+ chromaticAberrationFringeThresholdEv 3
+ chromaticAberrationFringeKneeEv 1
+ chromaticAberrationFringeRadiusUm 22
+ chromaticAberrationFringeHueDegrees 285
+ chromaticAberrationFringeSaturationPercent 110
+ chromaticAberrationFringeDirection "Outside Highlights"
+ chromaticAberrationFringeFieldBiasPercent 50
+ "Film Gate" 0
+ filmGateEnabled false
+ filmGateBlackOutside false
+ filmGateAffectDistortion false
+ filmGateAffectVignette false
+ filmGateAffectBokeh false
+ filmGateAffectComa false
+ filmGateFormatPreset "35mm Academy (1.375:1)"
+ filmGateRatio {1.375 1}
+ filmGateRoundedCorners true
+ filmGateRoundedCornerAmount 5
+ filmGateSoftness 0.5
+ filmGatePadding 0
+ "Film Plane" 0
+ filmPlaneEnabled false
+ enlargerScale 1
+ enlargerOffsetXPercent 0
+ enlargerOffsetYPercent 0
+ "Gate Weave" 0
+ gateWeaveEnabled false
+ gateWeaveMode Standard
+ gateWeaveCameraStage true
+ gateWeavePrinterStage true
+ gateWeaveScannerStage true
+ gateWeaveStrength 1
+ gateWeaveFrequency 1
+ gateWeaveGroupAmplitudes true
+ gateWeaveMaxAmplitudeX 0.15
+ gateWeaveMaxAmplitudeY 0.15
+ gateWeaveRotationStrength 0.08
+ gateWeaveAutoCrop true
+ gateWeaveSeed 951679865
+ "Flicker and Breathing" 0
+ flickerBreathingEnabled false
+ flickerPreset "Subtle Camera"
+ flickerControls Simple
+ flickerOrigin Camera
+ flickerAmountEv 0.06
+ flickerFrequencyHz 1
+ flickerBreathingRandomness 55
+ flickerColorEnabled false
+ flickerColorAmountEv 0.03
+ flickerSpatialEnabled false
+ flickerSpatialAmountPercent 35
+ flickerSpatialScalePercent 65
+ breathingEnabled false
+ breathingAmountPercent 0.25
+ breathingFrequencyHz 0.5
+ breathingRandomness 50
+ breathingAutoCrop true
+ flickerSlowDriftMixPercent 30
+ setKnobFlags {flickerSlowDriftMixPercent +HIDDEN}
+ flickerIrregularMixPercent 70
+ setKnobFlags {flickerIrregularMixPercent +HIDDEN}
+ flickerCyclicMixPercent 0
+ setKnobFlags {flickerCyclicMixPercent +HIDDEN}
+ flickerCyclicRateHz 2
+ setKnobFlags {flickerCyclicRateHz +HIDDEN}
+ flickerColorSpeed 0.35
+ setKnobFlags {flickerColorSpeed +HIDDEN}
+ flickerSpatialEvolution 0.5
+ setKnobFlags {flickerSpatialEvolution +HIDDEN}
+ flickerCameraWeightPercent 60
+ setKnobFlags {flickerCameraWeightPercent +HIDDEN}
+ flickerPrinterWeightPercent 25
+ setKnobFlags {flickerPrinterWeightPercent +HIDDEN}
+ flickerScannerWeightPercent 15
+ setKnobFlags {flickerScannerWeightPercent +HIDDEN}
+ flickerSeed 1731580759
+ setKnobFlags {flickerSeed +HIDDEN}
+ "Timing Shift Box" 0
+ timingShiftEnabled false
+ timingShiftPreset "Subtle Down"
+ timingShiftControls Simple
+ timingShiftOffsetDegrees -18
+ timingShiftJitter Off
+ timingShiftMixPercent 100
+ timingShiftHighlightEmphasis false
+ timingShiftEmphasisAmountPercent 50
+ timingShiftShutterAngleDegrees 180
+ setKnobFlags {timingShiftShutterAngleDegrees +HIDDEN}
+ timingShiftJitterRateHz 24
+ setKnobFlags {timingShiftJitterRateHz +HIDDEN}
+ timingShiftHighlightThresholdEv 2
+ setKnobFlags {timingShiftHighlightThresholdEv +HIDDEN}
+ timingShiftHighlightKneeEv 1
+ setKnobFlags {timingShiftHighlightKneeEv +HIDDEN}
+ timingShiftAffectAlpha false
+ setKnobFlags {timingShiftAffectAlpha +HIDDEN}
+ timingShiftSeed 2134845213
+ setKnobFlags {timingShiftSeed +HIDDEN}
+ "Film Damage" 0
+ Dust 0
+ setKnobFlags {Dust +HIDDEN}
+ dustHairsFineSpecksPercent 90
+ dustHairsSpeckSizeUm 9
+ dustHairsDustSizeVariationPercent 70
+ dustHairsDustClusteringPercent 10
+ dustHairsDustClusterSpreadMm 0.6
+ "Dirt / Blotches" 0
+ setKnobFlags {"Dirt / Blotches" +HIDDEN}
+ dustHairsBlotchSizeUm 80
+ dustHairsDirtSizeVariationPercent 55
+ dustHairsDirtIrregularityPercent 55
+ dustHairsDirtClumpingPercent 15
+ dustHairsDirtEdgeBreakupPercent 30
+ Hairs 0
+ setKnobFlags {Hairs +HIDDEN}
+ dustHairsHairLengthMm 4
+ dustHairsHairLengthVariationPercent 55
+ dustHairsHairThicknessUm 35
+ dustHairsHairCurlPercent 40
+ dustHairsHairWavinessPercent 25
+ dustHairsHairHookChancePercent 10
+ dustHairsHairEdgeEntryPercent 35
+ dustHairsHairTaperPercent 45
+ Fibres 0
+ setKnobFlags {Fibres +HIDDEN}
+ dustHairsFibreLengthMm 1.3
+ dustHairsFibreLengthVariationPercent 55
+ dustHairsFibreThicknessUm 12
+ dustHairsFibreCurlPercent 30
+ dustHairsFibreBranchingPercent 15
+ dustHairsFibreEdgeEntryPercent 10
+ Scratches 0
+ setKnobFlags {Scratches +HIDDEN}
+ dustHairsScratchLengthPercent 45
+ dustHairsScratchWidthUm 6
+ dustHairsScratchAngleDegrees 0
+ dustHairsScratchDirectionSpreadDegrees 2
+ dustHairsScratchBrokennessPercent 35
+ dustHairsScratchCurvaturePercent 2
+ dustHairsEnabled false
+ dustHairsPreset "Light Handling"
+ setKnobFlags {dustHairsPreset +HIDDEN}
+ dustHairsControls Simple
+ setKnobFlags {dustHairsControls +HIDDEN}
+ dustHairsMotionStyle "Modern Scan"
+ setKnobFlags {dustHairsMotionStyle +HIDDEN}
+ dustHairsPlane "Mixed Physical Planes"
+ setKnobFlags {dustHairsPlane +HIDDEN}
+ dustHairsLimitToFilmGate true
+ setKnobFlags {dustHairsLimitToFilmGate +HIDDEN}
+ dustHairsDustEnabled true
+ setKnobFlags {dustHairsDustEnabled +HIDDEN}
+ dustHairsDustAmount 1
+ setKnobFlags {dustHairsDustAmount +HIDDEN}
+ dustHairsDirtEnabled true
+ setKnobFlags {dustHairsDirtEnabled +HIDDEN}
+ dustHairsDirtAmount 0.12
+ setKnobFlags {dustHairsDirtAmount +HIDDEN}
+ dustHairsHairsEnabled true
+ setKnobFlags {dustHairsHairsEnabled +HIDDEN}
+ dustHairsHairsAmount 0.03
+ setKnobFlags {dustHairsHairsAmount +HIDDEN}
+ dustHairsFibresEnabled true
+ setKnobFlags {dustHairsFibresEnabled +HIDDEN}
+ dustHairsFibresAmount 0.06
+ setKnobFlags {dustHairsFibresAmount +HIDDEN}
+ dustHairsScratchesEnabled true
+ setKnobFlags {dustHairsScratchesEnabled +HIDDEN}
+ dustHairsScratchesAmount 0.01
+ setKnobFlags {dustHairsScratchesAmount +HIDDEN}
+ dustHairsFrequency 1.5
+ setKnobFlags {dustHairsFrequency +HIDDEN}
+ dustHairsSize 1
+ setKnobFlags {dustHairsSize +HIDDEN}
+ dustHairsTranslucency 0.88
+ setKnobFlags {dustHairsTranslucency +HIDDEN}
+ dustHairsSoftnessUm 20
+ setKnobFlags {dustHairsSoftnessUm +HIDDEN}
+ dustHairsSeed 1619622790
+ setKnobFlags {dustHairsSeed +HIDDEN}
+ "Sprockets and Writing" 0
+ sprocketsWritingEnabled false
+ sprocketPreset "Auto from Film Gate"
+ setKnobFlags {sprocketPreset +HIDDEN}
+ edgeWritingPreset "35mm Keykode / Footage"
+ setKnobFlags {edgeWritingPreset +HIDDEN}
+ edgeWritingPlacement "Auto from Film Gate"
+ setKnobFlags {edgeWritingPlacement +HIDDEN}
+ edgeWritingText SPEKTRAFILM
+ setKnobFlags {edgeWritingText +HIDDEN}
+ edgeWritingOpacity 0.8
+ setKnobFlags {edgeWritingOpacity +HIDDEN}
+ Telecine 0
+ telecineEnabled false
+ telecineMode Standard
+ setKnobFlags {telecineMode +HIDDEN}
+ telecineSystem "Flying-Spot CRT"
+ setKnobFlags {telecineSystem +HIDDEN}
+ telecineScanSoftness 0
+ setKnobFlags {telecineScanSoftness +HIDDEN}
+ telecineChromaBleed 0
+ setKnobFlags {telecineChromaBleed +HIDDEN}
+ telecineFieldBlend 0
+ setKnobFlags {telecineFieldBlend +HIDDEN}
+ Info 0
+ infoVersion 0.4.7
+ infoCreatedBy "Aedan Diez"
+ infoBasedOn "Andrea Volpato & Johannes Hanika"
+ Manage 0
+ Presets 0
+ presetName spektrafilm_preset
+ presetSelection "No presets found"
+ "LUT Export" 0
+ lutSize 65
+ lutDestination User
+ lutIdentifier spektrafilm
+ Backend 0
+ quality Production
+ gpuRenderTiling Auto
+ showRgbCurvesOverlay false
+ quickPresetCategoryId "Clean Slate"
+ quickPresetId "Clean Slate/Clean_Slate.spkpreset"
+ glareSeed 1491007244
+ instanceSchemaVersion 4
+ name spektrafilm2
+ xpos 212
+ ypos 470
+}
+Write {
+ file /Users/j7s/Downloads/overkill-clothes.jpeg
+ file_type jpeg
+ _jpeg_quality 1
+ _jpeg_sub_sampling 4:4:4
+ raw true
+ checkHashOnRead false
+ version 1
+ ocioColorspace scene_linear
+ display "sRGB - Display"
+ view "ACES 2.0 - SDR 100 nits (Rec.709)"
+ name Write1
+ xpos 111
+ ypos 598
+}
 Viewer {
+ frame 1
+ frame_range 1-100
+ viewerProcess "Raw (Display P3 - Display)"
+ monitorOutNDISenderName "NukeX - DetailCollapseValidation - Viewer1"
  name Viewer1
- xpos 200
- ypos 280
+ xpos 9
+ ypos 470
 }

@@ -44,6 +44,10 @@ Nuke and Resolve scan `/Library/OFX/Plugins` by default on the validation machin
 cmake --install build --prefix /Library/OFX/Plugins
 ```
 
+The repeatable host installation, node-discovery, troubleshooting, and future factory
+registration workflow is documented in
+[`docs/HostNodeExposure.md`](docs/HostNodeExposure.md).
+
 ## Nuke validation
 
 The smoke test checks discovery, parameter creation, odd-sized float RGB/RGBA renders,
