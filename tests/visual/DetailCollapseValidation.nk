@@ -1,0 +1,75 @@
+#! /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/libnuke-17.0.1.dylib -nx
+version 17.0 v1
+Root {
+ inputs 0
+ gsv  {
+  __default__ {
+  } 
+}
+ name /Users/j7s/coding/painterly-ofx/tests/visual/DetailCollapseValidation.nk
+ frame 0
+ format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
+ proxy_type scale
+ proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
+ colorManagement Nuke
+ workingSpaceLUT 0
+ monitorLut sRGB
+ monitorOutLUT rec709
+ int8Lut 0
+ int16Lut 0
+ logLut 0
+ floatLut 0
+}
+Read {
+ inputs 0
+ file_type png
+ file /Users/j7s/coding/painterly-ofx/tests/visual/inputs/cgi-specular.png
+ in_colorspace scene_linear
+ out_colorspace scene_linear
+ name Read1
+ xpos 200
+ ypos -20
+}
+Reformat {
+ type "to box"
+ box_width 256
+ box_height 256
+ resize fit
+ name Reformat1
+ xpos 200
+ ypos 80
+}
+OFXorg.painterlyofx.DetailCollapse_v1 {
+ amount 0.65
+ massScale 2.5
+ structureScale 5
+ massStrength 0.55
+ toneSimilarity 0.12
+ chromaSimilarity 0.18
+ boundaryPreserve 0.95
+ boundarySoftness 0.05
+ structurePreserve 1
+ internalVariation 0.4
+ lumaMassing 0.3
+ chromaMassing 1
+ highlightBias 0
+ midtoneBias 0
+ shadowBias 0
+ rangeEnabled false
+ rangeMinimum 0
+ rangeMaximum 1
+ rangeSoftness 0.1
+ workingGamut ACEScg
+ invertMask false
+ mix 1
+ debugView Final
+ name DetailCollapse1
+ selected true
+ xpos 200
+ ypos 180
+}
+Viewer {
+ name Viewer1
+ xpos 200
+ ypos 280
+}

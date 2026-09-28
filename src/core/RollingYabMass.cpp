@@ -89,6 +89,12 @@ InputDomainRequest RollingYabMassOperator::requiredInputDomain(
 
 void RollingYabMassOperator::apply(const SpatialOperation& op,
                                    const ExecutionContext& exec) const {
+  applyWithDebug(op, exec, {});
+}
+
+void RollingYabMassOperator::applyWithDebug(
+    const SpatialOperation& op, const ExecutionContext& exec,
+    const RollingYabMassDebugOutputs& debug) const {
   const RectI region = intersect(op.outputRegion, op.source.y.bounds);
   if (region.empty()) return;
   if (region.x1 != op.source.y.bounds.x1 || region.y1 != op.source.y.bounds.y1 ||
@@ -101,7 +107,6 @@ void RollingYabMassOperator::apply(const SpatialOperation& op,
                 "boundary-protection field does not cover the source RoD");
 
   const float strength = clamp01(options_.massStrength);
-  const int passes = std::max(1, options_.passes);
   if (strength <= 0.0f || options_.massScale <= 1e-4f) {
     copyYab(op.source, op.destination, region, exec);
     return;
@@ -130,6 +135,8 @@ void RollingYabMassOperator::apply(const SpatialOperation& op,
                   static_cast<float>(sigmaY), exec);
   gaussianBlurYab(op.source, variation, static_cast<float>(sigmaX * 0.25),
                   static_cast<float>(sigmaY * 0.25), exec);
+  if (debug.consolidationSeed)
+    copyYab(makeConst(seed), *debug.consolidationSeed, region, exec);
 
   exec.parallelRows(region.y1, region.y2, [&](int y1, int y2) {
     for (int y = y1; y < y2 && !exec.cancelled(); ++y) {
@@ -145,7 +152,8 @@ void RollingYabMassOperator::apply(const SpatialOperation& op,
     }
   });
 
-  for (int pass = 0; pass < passes && !exec.cancelled(); ++pass) {
+  constexpr int kRollingPasses = 4;
+  for (int pass = 0; pass < kRollingPasses && !exec.cancelled(); ++pass) {
     const ConstYabPlanes guide = makeConst(current);
     exec.parallelRows(region.y1, region.y2, [&](int y1, int y2) {
       for (int y = y1; y < y2 && !exec.cancelled(); ++y) {
@@ -187,6 +195,9 @@ void RollingYabMassOperator::apply(const SpatialOperation& op,
       }
     });
     std::swap(current, next);
+    if (debug.rollingIterations[static_cast<std::size_t>(pass)])
+      copyYab(makeConst(current),
+              *debug.rollingIterations[static_cast<std::size_t>(pass)], region, exec);
   }
 
   const float internal = clamp01(options_.internalVariation);
@@ -194,6 +205,8 @@ void RollingYabMassOperator::apply(const SpatialOperation& op,
   const float chroma = clamp01(options_.chromaMassing);
   const ConstYabPlanes mass = makeConst(current);
   const ConstYabPlanes varied = makeConst(variation);
+  if (debug.preReintegrationMass)
+    copyYab(mass, *debug.preReintegrationMass, region, exec);
   exec.parallelRows(region.y1, region.y2, [&](int y1, int y2) {
     for (int y = y1; y < y2 && !exec.cancelled(); ++y) {
       for (int x = region.x1; x < region.x2; ++x) {
@@ -205,6 +218,12 @@ void RollingYabMassOperator::apply(const SpatialOperation& op,
             consolidated.y + internal * effected * (lowVariation.y - consolidated.y),
             consolidated.a + internal * effected * (lowVariation.a - consolidated.a),
             consolidated.b + internal * effected * (lowVariation.b - consolidated.b)};
+        if (debug.internalVariationResidual) {
+          write(*debug.internalVariationResidual, x, y,
+                {lowVariation.y - consolidated.y,
+                 lowVariation.a - consolidated.a,
+                 lowVariation.b - consolidated.b});
+        }
         write(op.destination, x, y,
               {original.y + luma * (candidate.y - original.y),
                original.a + chroma * (candidate.a - original.a),

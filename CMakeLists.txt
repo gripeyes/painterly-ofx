@@ -20,6 +20,7 @@ add_library(pigment_core STATIC
   src/core/Masking.cpp
   src/core/DirectionalGaussian.cpp
   src/core/RollingYabMass.cpp
+  src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)
 target_compile_features(pigment_core PUBLIC cxx_std_17)
@@ -37,6 +38,10 @@ if(BUILD_TESTING)
   add_executable(pigment_mass_tests tests/MassFormationTests.cpp)
   target_link_libraries(pigment_mass_tests PRIVATE pigment_core)
   add_test(NAME pigment_mass_tests COMMAND pigment_mass_tests)
+
+  add_executable(pigment_detail_collapse_tests tests/DetailCollapseTests.cpp)
+  target_link_libraries(pigment_detail_collapse_tests PRIVATE pigment_core)
+  add_test(NAME pigment_detail_collapse_tests COMMAND pigment_detail_collapse_tests)
 endif()
 
 if(PIGMENT_BUILD_OFX)
@@ -71,6 +76,7 @@ if(PIGMENT_BUILD_OFX)
     src/ofx/ParameterHelpers.cpp
     src/ofx/OfxImageHelpers.cpp
     src/plugins/ChromaDiffusion.cpp
+    src/plugins/DetailCollapse.cpp
     src/ofx/PluginMain.cpp)
   target_link_libraries(Pigment PRIVATE pigment_core pigment_openfx_support)
   target_include_directories(Pigment PRIVATE src)

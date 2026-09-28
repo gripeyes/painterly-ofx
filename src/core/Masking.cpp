@@ -42,8 +42,36 @@ void buildStructureBoundaryField(ConstYabPlanes src, FloatPlaneView dst,
   if (bounds.empty()) return;
   OwnedYabPlanes guide(bounds);
   const float sigma = std::max(0.0f, o.structureScale);
-  gaussianBlurYab(src, guide.view(), sigma, sigma, exec);
-  const ConstYabPlanes g = static_cast<const OwnedYabPlanes&>(guide).view();
+  buildStructureGuide(src, guide.view(), sigma, sigma, o.structurePreserve, exec);
+  buildBoundaryProtectionFromGuide(
+      static_cast<const OwnedYabPlanes&>(guide).view(), dst, o, exec);
+}
+
+void buildStructureGuide(ConstYabPlanes src, YabPlanes dst,
+                         float sigmaX, float sigmaY, float preserve,
+                         const ExecutionContext& exec) {
+  const RectI bounds = intersect(src.y.bounds, dst.y.bounds);
+  if (bounds.empty()) return;
+  OwnedYabPlanes blurred(bounds);
+  gaussianBlurYab(src, blurred.view(), std::max(0.0f, sigmaX),
+                  std::max(0.0f, sigmaY), exec);
+  const ConstYabPlanes smooth = static_cast<const OwnedYabPlanes&>(blurred).view();
+  const float amount = clamp01(preserve);
+  exec.parallelRows(bounds.y1, bounds.y2, [&](int y1, int y2) {
+    for (int y = y1; y < y2 && !exec.cancelled(); ++y) {
+      for (int x = bounds.x1; x < bounds.x2; ++x) {
+        dst.y.at(x, y) = src.y.at(x, y) + amount * (smooth.y.at(x, y) - src.y.at(x, y));
+        dst.a.at(x, y) = src.a.at(x, y) + amount * (smooth.a.at(x, y) - src.a.at(x, y));
+        dst.b.at(x, y) = src.b.at(x, y) + amount * (smooth.b.at(x, y) - src.b.at(x, y));
+      }
+    }
+  });
+}
+
+void buildBoundaryProtectionFromGuide(ConstYabPlanes g, FloatPlaneView dst,
+                                      const StructureBoundaryOptions& o,
+                                      const ExecutionContext& exec) {
+  const RectI bounds = intersect(dst.bounds, g.y.bounds);
   exec.parallelRows(bounds.y1, bounds.y2, [&](int y1, int y2) {
     for (int y = y1; y < y2 && !exec.cancelled(); ++y) {
       for (int x = bounds.x1; x < bounds.x2; ++x) {
@@ -52,8 +80,7 @@ void buildStructureBoundaryField(ConstYabPlanes src, FloatPlaneView dst,
           const float gy = 0.5f * (sample(plane, x, y + 1) - sample(plane, x, y - 1));
           return gx * gx + gy * gy;
         };
-        const float localY = std::max({std::abs(sample(g.y, x, y)),
-                                       std::abs(sample(src.y, x, y)), 1e-3f});
+        const float localY = std::max(std::abs(sample(g.y, x, y)), 1e-3f);
         const float magnitudeSquared =
             std::max(0.0f, o.luminanceWeight) * gradient(g.y) / (localY * localY) +
             std::max(0.0f, o.axisAWeight) * gradient(g.a) +

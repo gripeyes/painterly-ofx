@@ -1,0 +1,31 @@
+# DetailCollapse Rolling YAB Mass visual reference
+
+`DetailCollapseValidation.nk` is a ready-to-inspect Nuke 17 scene using the installed
+Pigment OFX node. The four synthetic plates cover CGI material/specular breakup,
+low-light chroma, skin and fabric, and broad color fields. They were generated as
+neutral evaluation material, not as target looks.
+
+The saved reference setting intentionally masses chroma more strongly than luminance:
+
+- Amount 0.65, Mass Scale 2.5, Structure Scale 5
+- Mass Strength 0.55, Tone Similarity 0.12, Chroma Similarity 0.18
+- Boundary Preserve 0.95, Boundary Softness 0.05, Structure Preserve 1
+- Internal Variation 0.4, Luma Massing 0.3, Chroma Massing 1
+
+At 256 x 256 on the validation machine, 15 Nuke renders averaged about 0.22 seconds
+each. This direct four-pass bilateral implementation is a visual CPU reference and
+uses the full source RoD; it is not suitable as the eventual high-resolution backend.
+
+The CGI debug renders show that AB can be consolidated more strongly than Y and that
+the boundary field is independent of processing strength. The reference suppresses
+small material events while retaining the dominant object silhouette, but stronger
+luma settings can still look like conventional edge-aware smoothing. The Y path and
+internal-variation reintegration are therefore the main targets for the next visual
+iteration.
+
+The input plates were created with the built-in image generator from prompts for:
+
+1. A neutral studio CGI shader-ball scene with dense micro-specular breakup.
+2. A low-light photographic scene with blue, green, violet, and umber-black regions.
+3. A natural photographic portrait with visible skin and woven fabric detail.
+4. Broad overlapping painted color fields with restrained fine texture.

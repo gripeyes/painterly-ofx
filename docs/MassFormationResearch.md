@@ -1,9 +1,10 @@
 # DetailCollapse Mass Formation Research
 
-Mass Formation is an internal processing mode reserved for the future
-`DetailCollapse` effect. It is not an OFX effect, plug-in factory, or public node.
-The current code is a CPU visual reference used to evaluate the Rolling YAB Mass
-architecture before an optimized backend is selected.
+Mass Formation is an internal processing mode of `DetailCollapse`; it is not a
+separate OFX effect, plug-in factory, or public node. For visual research, the normal
+Pigment bundle temporarily exposes the backend through **DetailCollapse (Research)**.
+The current code is a CPU visual reference used to evaluate Rolling YAB Mass before
+an optimized backend or final DetailCollapse interface is selected.
 
 ## Architectural invariants
 
@@ -36,6 +37,11 @@ version of the source rather than raw fine detail.
 The implementation is deliberately a reference, not the intended 4K production
 backend. Once its visual behaviour is accepted, guided filtering and the domain
 transform can be compared against its output.
+
+The temporary node includes debug views for the seed, structure guide, independent
+processing and boundary fields, each rolling iteration, separated Y/AB mass results,
+the variation residual, the pre-reintegration mass, and an inspectable difference
+view. These are alternate displays of the same output, not extra OFX clips.
 
 ## Research basis and prototype order
 
@@ -73,3 +79,8 @@ row scheduling, and scratch ownership.
 `pigment_mass_research` generates an HDR synthetic scene with small specular detail
 and a broad silhouette. It exposes Mass Scale and Structure Scale separately and can
 write source, result, and boundary-permeability PFM images for external inspection.
+
+`pigment_detail_collapse_tests` covers the temporary effect-level processor,
+including all debug modes, full-RoD requests, odd strides and origins, exact bypass,
+external masks, alpha preservation, and straight/premultiplied equivalence. The Nuke
+validation scene and saved renders live under `tests/visual`.

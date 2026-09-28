@@ -1,4 +1,5 @@
 #include "plugins/ChromaDiffusion.h"
+#include "plugins/DetailCollapse.h"
 
 namespace OFX::Plugin {
 
@@ -6,7 +7,9 @@ void getPluginIDs(OFX::PluginFactoryArray& ids) {
   static pigment::plugin::ChromaDiffusionFactory factory(
       "org.painterlyofx.ChromaDiffusion", 1, 0);
   ids.push_back(&factory);
+  static pigment::plugin::DetailCollapseFactory detailCollapse(
+      "org.painterlyofx.DetailCollapse", 1, 0);
+  ids.push_back(&detailCollapse);
 }
 
 }  // namespace OFX::Plugin
-

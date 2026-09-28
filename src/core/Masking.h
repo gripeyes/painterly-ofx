@@ -16,6 +16,7 @@ struct StructureBoundaryOptions {
   // The value is in pixels of the supplied planes; a future host wrapper is
   // responsible for render-scale and pixel-aspect conversion.
   float structureScale = 4.0f;
+  float structurePreserve = 1.0f;
   float protection = 0.75f;
   float softness = 0.15f;
   float luminanceWeight = 1.0f;
@@ -39,6 +40,13 @@ void buildBoundaryField(ConstYabPlanes source, FloatPlaneView destination,
 void buildStructureBoundaryField(ConstYabPlanes source, FloatPlaneView destination,
                                  const StructureBoundaryOptions& options,
                                  const ExecutionContext& execution = {});
+void buildStructureGuide(ConstYabPlanes source, YabPlanes destination,
+                         float sigmaX, float sigmaY, float structurePreserve,
+                         const ExecutionContext& execution = {});
+void buildBoundaryProtectionFromGuide(ConstYabPlanes guide,
+                                      FloatPlaneView destination,
+                                      const StructureBoundaryOptions& options,
+                                      const ExecutionContext& execution = {});
 float tonalWeight(float y, const TonalMaskOptions& options) noexcept;
 void composeProcessingStrengthField(ConstFloatPlaneView luminance,
                                     const ConstFloatPlaneView* externalMask,

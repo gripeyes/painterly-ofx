@@ -1,18 +1,16 @@
 # Pigment OFX
 
 Pigment is a CPU OpenFX image-processing suite for controlled spatial treatment of
-photographic information. Stage 1 contains **ChromaDiffusion**, which diffuses two
-linear opponent-color axes independently of luminance. It does not apply a transfer
+photographic information. The bundle contains the production Stage 1
+**ChromaDiffusion** effect and a temporary **DetailCollapse (Research)** node used to
+evaluate the Stage 2 Rolling YAB Mass reference. Neither path applies a transfer
 function, LUT, gamut mapping, or HDR clamp.
 
-The bundle currently targets Apple Silicon and has been validated with Nuke 17 and
-DaVinci Resolve Studio 21.
-DetailCollapse, Mass Formation, and DensityVeil are intentionally not implemented in
-Stage 1.
-
-The core also contains a Stage 2 **research-only Rolling YAB Mass reference**. It is
-not registered as an OFX effect: Mass Formation is reserved as an internal backend
-for the future DetailCollapse effect.
+The bundle currently targets Apple Silicon. ChromaDiffusion has been validated with
+Nuke 17 and DaVinci Resolve Studio 21. DetailCollapse currently exposes only the
+Rolling YAB Mass research backend for Nuke visual evaluation; it is not a production
+DetailCollapse implementation. Mass Formation remains an internal mode of that node,
+not a separate public effect. DensityVeil is not implemented.
 
 ## Build
 
@@ -59,6 +57,17 @@ PIGMENT_NUKE_OUTPUT="$validation_dir" \
   -t tests/nuke_validate.py
 ```
 
+The interactive Stage 2 validation scene is
+[`tests/visual/DetailCollapseValidation.nk`](tests/visual/DetailCollapseValidation.nk).
+It uses the normal `Pigment.ofx.bundle`, not a gizmo. Install the bundle in a standard
+system OFX location, restart Nuke, and create **DetailCollapse** from Tab search. The
+automated visual-reference render can be repeated with:
+
+```sh
+/Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/Nuke17.0 \
+  -t tests/nuke_detailcollapse_validate.py
+```
+
 ## Resolve validation
 
 Install to a user-local OFX path, restart Resolve with that path enabled, then add
@@ -82,9 +91,9 @@ permeability are independent utilities.
 Spatial algorithms implement `SpatialOperator`, report either a finite halo or a
 full-region input requirement, and consume generic YAB planes plus independent
 processing-strength and boundary-permeability fields. Either field can be constant
-or per-pixel. ChromaDiffusion uses `DirectionalGaussianOperator`; the
-interface does not assume convolution or separability and can later host region-aware
-Mass Formation without changing the OFX wrappers.
+or per-pixel. ChromaDiffusion uses `DirectionalGaussianOperator`; Rolling YAB Mass is
+a full-region, region-aware operator. The interface assumes neither convolution nor
+separability.
 
 ## Mass Formation research harness
 
