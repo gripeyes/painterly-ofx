@@ -25,7 +25,7 @@ required = {
     "veilScale", "veilIrregularity", "veilContrast", "veilSeed", "detailCleanup",
     "fineDetail", "mediumDetail", "internalVariation", "chromaMigration",
     "chromaScale", "chromaEdgeRespect", "regionSoftness", "boundaryScale",
-    "veilTonalBias", "chromaLumaCoupling", "workingGamut", "comparisonMode",
+    "modeSelectivity", "veilTonalBias", "chromaLumaCoupling", "workingGamut", "comparisonMode",
     "debugView", "mix",
 }
 missing = required.difference(node.knobs())
@@ -60,33 +60,46 @@ plates = {
     "cgi-specular": "cgi-specular.png",
 }
 timings = []
+for knob, value in {
+    "amount": 0.9, "massScale": 30.0, "massStrength": 0.78,
+    "toneSimilarity": 0.42, "chromaSimilarity": 0.30,
+    "lumaAttraction": 0.82, "chromaAttraction": 0.95,
+    "boundaryPreserve": 0.58, "boundaryExtinction": 0.48,
+    "modeSelectivity": 0.88, "detailCleanup": 0.0,
+    "fineDetail": 0.02, "mediumDetail": 0.08, "internalVariation": 0.22,
+}.items():
+    node[knob].setValue(value)
 for label, filename in plates.items():
     read = nuke.nodes.Read(file=os.path.join(root, "tests", "visual", "inputs", filename))
     reformat = nuke.nodes.Reformat(inputs=[read])
     reformat["type"].setValue("to box")
-    reformat["box_width"].setValue(256)
-    reformat["box_height"].setValue(256)
+    reformat["box_width"].setValue(512)
+    reformat["box_height"].setValue(512)
     reformat["resize"].setValue("fit")
     node.setInput(0, reformat)
-    for comparison, suffix in ((0, "original"), (1, "guided"), (2, "integrated")):
+    for comparison, suffix in ((0, "original"), (1, "guided"),
+                               (2, "weighted-mean"), (3, "representative-mode")):
         node["comparisonMode"].setValue(comparison)
         node["debugView"].setValue(0)
         timings.append(render_png(node, label + "-" + suffix + ".png"))
     if label in ("fruit-grapes", "laundry-cloth"):
-        node["comparisonMode"].setValue(2)
+        node["comparisonMode"].setValue(3)
         for value, suffix in {
             1: "coarse-structure", 2: "veil", 3: "mass-field",
             4: "boundary-extinction-field", 6: "detail-retention-field",
             7: "region-mode", 8: "attraction", 11: "pre-boundary-mass",
             12: "boundary-protection", 14: "chroma-migration",
-            18: "pre-reintegration", 19: "difference",
+            18: "pre-reintegration", 19: "difference", 20: "local-density",
+            21: "dominant-mode", 22: "mode-confidence",
+            23: "representative-distance", 24: "candidate-competition",
+            25: "legacy-debug-result", 26: "representative-debug-result",
         }.items():
             node["debugView"].setValue(value)
             timings.append(render_png(node, label + "-" + suffix + ".png"))
     nuke.delete(reformat)
     nuke.delete(read)
 
-node["comparisonMode"].setValue(2)
+node["comparisonMode"].setValue(3)
 node["debugView"].setValue(0)
 validation_read = nuke.nodes.Read(
     file=os.path.join(root, "tests", "visual", "inputs", "laundry-cloth.png")

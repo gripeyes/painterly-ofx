@@ -10,6 +10,10 @@ than Guided DetailCollapse, but does not reliably reorganize fruit, material eve
 or cloth into fewer convincing pictorial masses. Work stopped at that gate instead
 of polishing or selecting this algorithm for production.
 
+This is the historical Weighted Mean result. Phase 3.1 preserves it as a comparison
+backend and replaces only mass estimation with a density-seeking representative
+method; see `docs/Phase3_1DensitySeeking.md`.
+
 ## Implemented graph
 
 The node performs one GPU-resident RGB → YAB → RGB graph containing multiscale

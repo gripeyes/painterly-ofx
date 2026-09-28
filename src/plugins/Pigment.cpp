@@ -41,6 +41,7 @@ constexpr const char* kChromaMigration = "chromaMigration";
 constexpr const char* kChromaScale = "chromaScale";
 constexpr const char* kChromaEdgeRespect = "chromaEdgeRespect";
 constexpr const char* kRegionSoftness = "regionSoftness";
+constexpr const char* kModeSelectivity = "modeSelectivity";
 constexpr const char* kBoundaryScale = "boundaryScale";
 constexpr const char* kVeilTonalBias = "veilTonalBias";
 constexpr const char* kChromaLumaCoupling = "chromaLumaCoupling";
@@ -69,6 +70,7 @@ class PigmentEffect final : public OFX::ImageEffect {
     FETCH_DOUBLE(mediumDetail_, kMediumDetail); FETCH_DOUBLE(internalVariation_, kInternalVariation);
     FETCH_DOUBLE(chromaMigration_, kChromaMigration); FETCH_DOUBLE(chromaScale_, kChromaScale);
     FETCH_DOUBLE(chromaEdgeRespect_, kChromaEdgeRespect); FETCH_DOUBLE(regionSoftness_, kRegionSoftness);
+    FETCH_DOUBLE(modeSelectivity_, kModeSelectivity);
     FETCH_DOUBLE(boundaryScale_, kBoundaryScale); FETCH_DOUBLE(veilTonalBias_, kVeilTonalBias);
     FETCH_DOUBLE(chromaLumaCoupling_, kChromaLumaCoupling); FETCH_DOUBLE(mix_, kMix);
 #undef FETCH_DOUBLE
@@ -100,6 +102,7 @@ class PigmentEffect final : public OFX::ImageEffect {
       *veilContrast_ = nullptr, *detailCleanup_ = nullptr, *fineDetail_ = nullptr,
       *mediumDetail_ = nullptr, *internalVariation_ = nullptr, *chromaMigration_ = nullptr,
       *chromaScale_ = nullptr, *chromaEdgeRespect_ = nullptr, *regionSoftness_ = nullptr,
+      *modeSelectivity_ = nullptr,
       *boundaryScale_ = nullptr, *veilTonalBias_ = nullptr, *chromaLumaCoupling_ = nullptr,
       *mix_ = nullptr;
   OFX::IntParam* veilSeed_ = nullptr;
@@ -125,6 +128,7 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   VALUE(internalVariation_, internalVariation); VALUE(chromaMigration_, chromaMigration);
   VALUE(chromaScale_, chromaScale); VALUE(chromaEdgeRespect_, chromaEdgeRespect);
   VALUE(regionSoftness_, regionSoftness); VALUE(boundaryScale_, boundaryScale);
+  VALUE(modeSelectivity_, modeSelectivity);
   VALUE(veilTonalBias_, veilTonalBias); VALUE(chromaLumaCoupling_, chromaLumaCoupling);
   VALUE(mix_, mix);
 #undef VALUE
@@ -134,9 +138,9 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   gamut_->getValueAtTime(time, value);
   p.gamut = static_cast<WorkingGamut>(std::max(0, std::min(3, value)));
   comparison_->getValueAtTime(time, value);
-  p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(2, value)));
+  p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(3, value)));
   debug_->getValueAtTime(time, value);
-  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(19, value)));
+  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(26, value)));
   return p;
 }
 
@@ -307,6 +311,9 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
 
   auto* advanced = group(d, "advancedGroup", "Research Advanced", false);
   number(d, *advanced, kRegionSoftness, "Region Softness", 0.5, 0.1, 4, 2, "Tail softness of joint spatial/color attraction");
+  number(d, *advanced, kModeSelectivity, "Mode Selectivity", 0.65, 0, 1, 1,
+         "Low softly mixes candidate populations; high favors the dominant coherent mode",
+         OFX::eDoubleTypeScale);
   number(d, *advanced, kBoundaryScale, "Boundary Scale", 12, 0.25, 256, 64, "Independent support for boundary extinction");
   number(d, *advanced, kVeilTonalBias, "Veil Tonal Bias", 0, -1, 1, 1, "Bias the broad field using unclipped luminance");
   number(d, *advanced, kChromaLumaCoupling, "Chroma/Luma Coupling", 0.6, 0, 1, 1, "Amount of Y structure guiding chroma migration", OFX::eDoubleTypeScale);
@@ -318,8 +325,10 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   invert->setParent(*advanced);
   auto* comparison = d.defineChoiceParam(kComparison); comparison->setLabels("Comparison", "Comparison", "Comparison");
   comparison->setScriptName(kComparison); comparison->appendOption("Original");
-  comparison->appendOption("Current Guided DetailCollapse"); comparison->appendOption("Integrated Pigment");
-  comparison->setDefault(2); comparison->setParent(*advanced);
+  comparison->appendOption("Current Guided DetailCollapse");
+  comparison->appendOption("Weighted Mean (legacy research)");
+  comparison->appendOption("Representative Mode");
+  comparison->setDefault(3); comparison->setParent(*advanced);
   auto* debug = d.defineChoiceParam(kDebug); debug->setLabels("Debug View", "Debug View", "Debug View");
   debug->setScriptName(kDebug);
   for (const char* option : {"Final", "Coarse Structure", "Veil Source", "Mass Strength Field",
@@ -327,7 +336,10 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
       "Region Centroid / Mode", "Region Attraction Magnitude", "Y Mass", "AB Mass",
       "Mass Result Before Boundary Processing", "Boundary Protection", "Boundary Extinction",
       "Chroma Migration Result", "Fine Residual", "Medium Residual", "Internal Variation",
-      "Pre-Reintegration", "Difference From Original"}) debug->appendOption(option);
+      "Pre-Reintegration", "Difference From Original", "Local Density",
+      "Winning / Dominant Mode", "Mode Confidence", "Representative Distance",
+      "Candidate Competition", "Legacy Weighted Mean", "Representative Mode Result"})
+    debug->appendOption(option);
   debug->setDefault(0); debug->setParent(*advanced);
 }
 

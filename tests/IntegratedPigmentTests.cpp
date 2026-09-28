@@ -69,11 +69,48 @@ void testPhysicalMassScaleSupport() {
         "Soft region reference remains finite");
 }
 
+void testRepresentativePopulationSelection() {
+  const pigment::RectI bounds{0, 0, 25, 9};
+  pigment::OwnedYabPlanes source(bounds), legacy(bounds), representative(bounds), softRepresentative(bounds);
+  auto s = source.view();
+  for (int y = 0; y < bounds.y2; ++y) for (int x = 0; x < bounds.x2; ++x) {
+    const bool dominantGreen = x < 17;
+    s.y.at(x, y) = dominantGreen ? 0.55f : 0.31f;
+    s.a.at(x, y) = dominantGreen ? -0.12f : 0.16f;
+    s.b.at(x, y) = dominantGreen ? 0.10f : -0.08f;
+  }
+  pigment::IntegratedPigmentParams p;
+  p.massScale = 12.0f; p.massStrength = 1.0f;
+  p.toneSimilarity = 12.0f; p.chromaSimilarity = 2.0f;
+  p.lumaAttraction = 1.0f; p.chromaAttraction = 1.0f;
+  p.boundaryPreserve = 0.0f; p.modeSelectivity = 1.0f;
+  pigment::softRegionMassReference(pigment::asConst(s), legacy.view(), 1.0f, 0.0f, p);
+  pigment::representativeRegionMassReference(
+      pigment::asConst(s), representative.view(), 1.0f, 0.0f, p);
+  p.modeSelectivity = 0.0f;
+  pigment::representativeRegionMassReference(
+      pigment::asConst(s), softRepresentative.view(), 1.0f, 0.0f, p);
+  const int x = 12, y = 4;
+  const auto distanceToGreen = [&](pigment::YabPlanes view) {
+    const float dy = view.y.at(x, y) - 0.55f;
+    const float da = view.a.at(x, y) + 0.12f;
+    const float db = view.b.at(x, y) - 0.10f;
+    return std::sqrt(dy * dy + da * da + db * db);
+  };
+  check(distanceToGreen(representative.view()) < distanceToGreen(legacy.view()),
+        "Representative mode stays closer to the dominant source population than the mean");
+  check(distanceToGreen(representative.view()) < distanceToGreen(softRepresentative.view()),
+        "Mode Selectivity continuously strengthens dominant-population attraction");
+  check(std::isfinite(representative.view().y.at(x, y)),
+        "Representative mode remains deterministic and finite");
+}
+
 }  // namespace
 
 int main() {
   testVeilAndFields();
   testPhysicalMassScaleSupport();
+  testRepresentativePopulationSelection();
   if (failures) {
     std::cerr << failures << " integrated Pigment test(s) failed\n";
     return 1;

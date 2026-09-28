@@ -21,6 +21,7 @@ struct Options {
   float massScale = 8.0f;
   bool verify = false;
   bool integrated = false;
+  bool legacy = false;
 };
 
 Options options(int argc, char** argv) {
@@ -38,6 +39,7 @@ Options options(int argc, char** argv) {
     else if (option == "--rounds") result.rounds = std::stoi(value());
     else if (option == "--verify") result.verify = true;
     else if (option == "--integrated") result.integrated = true;
+    else if (option == "--legacy") result.legacy = true;
     else throw std::runtime_error("unknown option: " + option);
   }
   return result;
@@ -115,6 +117,8 @@ int main(int argc, char** argv) {
         integrated.destination = request.destination;
         integrated.renderWindow = bounds;
         integrated.params = integratedParameters(o.massScale);
+        if (o.legacy)
+          integrated.params.comparison = pigment::PigmentComparisonMode::WeightedMeanPigment;
         succeeded = instance.renderIntegrated(integrated);
       } else {
         succeeded = instance.render(request);
@@ -134,7 +138,8 @@ int main(int argc, char** argv) {
                                            (value - sum / times.size());
     const auto& d = instance.diagnostics();
     std::cout << std::fixed << std::setprecision(3)
-              << (o.integrated ? "integrated " : "guided ")
+              << (o.integrated ? (o.legacy ? "integrated-legacy " : "integrated-representative ")
+                               : "guided ")
               << o.width << 'x' << o.height << " mass=" << o.massScale
               << " median_ms=" << percentile(times, 0.5)
               << " p95_ms=" << percentile(times, 0.95)

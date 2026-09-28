@@ -82,10 +82,11 @@ Nuke scene with:
   -t tests/nuke_pigment_validate.py
 ```
 
-This writes matched comparison/debug renders and
-[`tests/visual/PigmentValidation.nk`](tests/visual/PigmentValidation.nk). The current
-prototype meets the interactive performance goal but does not pass the artistic
-acceptance gate; see [the Phase 3 report](docs/Phase3IntegratedPigment.md).
+This writes matched Original, Guided, legacy Weighted Mean, Representative Mode, and
+debug renders plus [`tests/visual/PigmentValidation.nk`](tests/visual/PigmentValidation.nk).
+The Phase 3 weighted-mean estimator remains the documented failure baseline;
+Phase 3.1 adds a density-seeking representative backend that passes the first visual
+gate with known contour artifacts. See [the Phase 3.1 report](docs/Phase3_1DensitySeeking.md).
 
 ## Resolve validation
 

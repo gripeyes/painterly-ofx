@@ -41,18 +41,18 @@ Reformat {
 }
 OFXorg.painterlyofx.Pigment_v1 {
  Painterly 1
- amount 0.7
- massScale 18
- massStrength 0.55
- toneSimilarity 0.25
- chromaSimilarity 0.18
- lumaAttraction 0.65
- chromaAttraction 0.8
+ amount 0.9
+ massScale 30
+ massStrength 0.78
+ toneSimilarity 0.42
+ chromaSimilarity 0.3
+ lumaAttraction 0.82
+ chromaAttraction 0.95
  Structure 1
  structureScale 10
  structurePreserve 0.8
- boundaryPreserve 0.75
- boundaryExtinction 0.35
+ boundaryPreserve 0.58
+ boundaryExtinction 0.48
  boundarySoftness 0.15
  "Spatial Variation" 1
  veilAmount 0.35
@@ -61,10 +61,10 @@ OFXorg.painterlyofx.Pigment_v1 {
  veilContrast 0.3
  veilSeed 1
  Detail 1
- detailCleanup 0.1
- fineDetail 0.05
- mediumDetail 0.15
- internalVariation 0.3
+ detailCleanup 0
+ fineDetail 0.02
+ mediumDetail 0.08
+ internalVariation 0.22
  Chroma 1
  chromaMigration 0.35
  chromaScale 24
@@ -73,12 +73,13 @@ OFXorg.painterlyofx.Pigment_v1 {
  mix 1
  "Research Advanced" 0
  regionSoftness 0.5
+ modeSelectivity 0.88
  boundaryScale 12
  veilTonalBias 0
  chromaLumaCoupling 0.6
  workingGamut ACEScg
  invertMask false
- comparisonMode "Integrated Pigment"
+ comparisonMode "Representative Mode"
  debugView Final
  name Pigment1
  selected true

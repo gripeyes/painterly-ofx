@@ -307,14 +307,14 @@ kernel void pigment_final(
 struct IntegratedParams {
   uint width, height, sourceComponents, destinationComponents;
   uint hasMask, maskComponents, premultiplied, invertMask;
-  uint comparisonMode, debugView, veilSeed, reserved;
+  uint comparisonMode, debugView, veilSeed, massEstimator;
   float amount, massScale, massStrength, toneSimilarity, chromaSimilarity;
   float lumaAttraction, chromaAttraction;
   float structurePreserve, boundaryPreserve, boundaryExtinction, boundarySoftness;
   float veilAmount, veilScale, veilIrregularity, veilContrast;
   float detailCleanup, fineDetail, mediumDetail, internalVariation;
   float chromaMigration, chromaScale, chromaEdgeRespect;
-  float regionSoftness, boundaryScale, veilTonalBias, chromaLumaCoupling, mix;
+  float regionSoftness, modeSelectivity, boundaryScale, veilTonalBias, chromaLumaCoupling, mix;
   float renderScaleX, renderScaleY, pixelAspect, originX, originY;
   float whiteX, whiteZ;
   float rgbToXyz[9];
@@ -519,17 +519,141 @@ kernel void pigment_integrated_region_iteration(
   nextYab.write(movedYab, gid);
 }
 
+kernel void pigment_integrated_local_density(
+    texture2d<float, access::sample> previousYab [[texture(0)]],
+    texture2d<float, access::sample> previousPosition [[texture(1)]],
+    texture2d<float, access::sample> protection [[texture(2)]],
+    texture2d<float, access::sample> extinction [[texture(3)]],
+    constant IntegratedParams& p [[buffer(0)]],
+    constant RegionLevelParams& level [[buffer(1)]],
+    texture2d<float, access::write> densityOut [[texture(4)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= level.width || gid.y >= level.height) return;
+  float2 here = float2(gid) + 0.5f;
+  float2 center = previousPosition.sample(integratedLinear, here).xy;
+  float4 centerYab = previousYab.sample(integratedLinear, center);
+  float2 fullCenter = center / level.levelScale;
+  float centerProtection = protection.sample(integratedLinear, fullCenter).x *
+      (1.0f - extinction.sample(integratedLinear, fullCenter).x);
+  float localYScale = max(0.05f, abs(centerYab.x) * 0.2f);
+  float density = 0.0f;
+  for (int gy = -4; gy <= 4; ++gy) for (int gx = -4; gx <= 4; ++gx) {
+    float2 candidate = center + float2(level.radiusX * float(gx) / 4.0f,
+                                       level.radiusY * float(gy) / 4.0f);
+    float2 samplePosition = previousPosition.sample(integratedLinear, candidate).xy;
+    float4 sampleYab = previousYab.sample(integratedLinear, candidate);
+    float2 delta = float2((samplePosition.x - center.x) / max(level.radiusX, 0.25f),
+                          (samplePosition.y - center.y) / max(level.radiusY, 0.25f));
+    float dy = (sampleYab.x - centerYab.x) /
+        max(1.0e-5f, p.toneSimilarity * localYScale);
+    float2 dc = (sampleYab.yz - centerYab.yz) / max(1.0e-5f, p.chromaSimilarity);
+    float2 fullSample = candidate / level.levelScale;
+    float sampleProtection = protection.sample(integratedLinear, fullSample).x *
+        (1.0f - extinction.sample(integratedLinear, fullSample).x);
+    float permeability = max(1.0e-4f, 1.0f - max(centerProtection, sampleProtection));
+    float energy = dot(delta, delta) / max(0.1f, p.regionSoftness) +
+        dy * dy + dot(dc, dc);
+    density += exp(-0.5f * min(80.0f, energy)) * permeability;
+  }
+  densityOut.write(float4(density / 81.0f), gid);
+}
+
+kernel void pigment_integrated_representative_iteration(
+    texture2d<float, access::sample> previousYab [[texture(0)]],
+    texture2d<float, access::sample> previousPosition [[texture(1)]],
+    texture2d<float, access::sample> density [[texture(2)]],
+    texture2d<float, access::sample> protection [[texture(3)]],
+    texture2d<float, access::sample> extinction [[texture(4)]],
+    texture2d<float, access::sample> massField [[texture(5)]],
+    constant IntegratedParams& p [[buffer(0)]],
+    constant RegionLevelParams& level [[buffer(1)]],
+    texture2d<float, access::write> nextYab [[texture(6)]],
+    texture2d<float, access::write> nextPosition [[texture(7)]],
+    texture2d<float, access::write> dominantOut [[texture(8)]],
+    texture2d<float, access::write> diagnosticOut [[texture(9)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= level.width || gid.y >= level.height) return;
+  float2 here = float2(gid) + 0.5f;
+  float2 center = previousPosition.sample(integratedLinear, here).xy;
+  float4 centerYab = previousYab.sample(integratedLinear, center);
+  float2 fullCenter = center / level.levelScale;
+  float centerProtection = protection.sample(integratedLinear, fullCenter).x *
+      (1.0f - extinction.sample(integratedLinear, fullCenter).x);
+  float localYScale = max(0.05f, abs(centerYab.x) * 0.2f);
+  float topScore[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+  float4 topYab[4] = {centerYab, centerYab, centerYab, centerYab};
+  float2 topPosition[4] = {center, center, center, center};
+  for (int gy = -4; gy <= 4; ++gy) for (int gx = -4; gx <= 4; ++gx) {
+    float2 candidate = center + float2(level.radiusX * float(gx) / 4.0f,
+                                       level.radiusY * float(gy) / 4.0f);
+    float2 samplePosition = previousPosition.sample(integratedLinear, candidate).xy;
+    float4 sampleYab = previousYab.sample(integratedLinear, candidate);
+    float2 delta = float2((samplePosition.x - center.x) / max(level.radiusX, 0.25f),
+                          (samplePosition.y - center.y) / max(level.radiusY, 0.25f));
+    float dy = (sampleYab.x - centerYab.x) /
+        max(1.0e-5f, p.toneSimilarity * localYScale);
+    float2 dc = (sampleYab.yz - centerYab.yz) / max(1.0e-5f, p.chromaSimilarity);
+    float2 fullSample = candidate / level.levelScale;
+    float sampleProtection = protection.sample(integratedLinear, fullSample).x *
+        (1.0f - extinction.sample(integratedLinear, fullSample).x);
+    float permeability = max(1.0e-4f, 1.0f - max(centerProtection, sampleProtection));
+    float eligibility = exp(-0.5f * min(80.0f,
+        dot(delta, delta) / max(0.1f, p.regionSoftness) + dy * dy + dot(dc, dc))) *
+        permeability;
+    float score = density.sample(integratedLinear, candidate).x * eligibility;
+    for (int rank = 0; rank < 4; ++rank) {
+      if (score > topScore[rank]) {
+        for (int move = 3; move > rank; --move) {
+          topScore[move] = topScore[move - 1]; topYab[move] = topYab[move - 1];
+          topPosition[move] = topPosition[move - 1];
+        }
+        topScore[rank] = score; topYab[rank] = sampleYab;
+        topPosition[rank] = samplePosition; break;
+      }
+    }
+  }
+  float temperature = 0.6f * exp2(-4.0f * clamp01(p.modeSelectivity)) + 0.025f;
+  float weightSum = 0.0f; float4 representative = float4(0.0f);
+  float2 representativePosition = float2(0.0f);
+  for (int rank = 0; rank < 4; ++rank) {
+    float weight = exp((topScore[rank] - topScore[0]) / temperature);
+    weightSum += weight; representative += weight * topYab[rank];
+    representativePosition += weight * topPosition[rank];
+  }
+  representative /= max(weightSum, 1.0e-8f);
+  representativePosition /= max(weightSum, 1.0e-8f);
+  float gain = clamp01(p.massStrength) *
+      clamp01(massField.sample(integratedLinear, fullCenter).x);
+  float4 movedYab = mix(centerYab, representative, gain); movedYab.w = centerYab.w;
+  float2 movedPosition = mix(center, representativePosition, gain);
+  float confidence = clamp01(topScore[0] /
+      max(1.0e-6f, topScore[0] + topScore[1] + topScore[2] + topScore[3]));
+  float competition = clamp01(topScore[1] / max(1.0e-6f, topScore[0]));
+  float distance = length(float3((representative.x - centerYab.x) / localYScale,
+                                  representative.yz - centerYab.yz));
+  nextPosition.write(float4(movedPosition, 0.0f, 1.0f), gid);
+  nextYab.write(movedYab, gid); dominantOut.write(representative, gid);
+  diagnosticOut.write(float4(density.sample(integratedLinear, center).x,
+      confidence, 1.0f - exp(-distance), competition), gid);
+}
+
 kernel void pigment_integrated_reconstruct_mass(
     texture2d<float, access::read> original [[texture(0)]],
     texture2d<float, access::sample> halfYab [[texture(1)]],
     texture2d<float, access::sample> halfPosition [[texture(2)]],
     texture2d<float, access::sample> quarterYab [[texture(3)]],
     texture2d<float, access::sample> quarterPosition [[texture(4)]],
+    texture2d<float, access::sample> halfDominant [[texture(5)]],
+    texture2d<float, access::sample> quarterDominant [[texture(6)]],
+    texture2d<float, access::sample> halfDiagnostic [[texture(7)]],
+    texture2d<float, access::sample> quarterDiagnostic [[texture(8)]],
     constant IntegratedParams& p [[buffer(0)]],
     constant RegionLevelParams& halfLevel [[buffer(1)]],
     constant RegionLevelParams& quarterLevel [[buffer(2)]],
-    texture2d<float, access::write> mass [[texture(5)]],
-    texture2d<float, access::write> attraction [[texture(6)]],
+    texture2d<float, access::write> mass [[texture(9)]],
+    texture2d<float, access::write> attraction [[texture(10)]],
+    texture2d<float, access::write> dominantFull [[texture(11)]],
+    texture2d<float, access::write> diagnosticFull [[texture(12)]],
     uint2 gid [[thread_position_in_grid]]) {
   if (gid.x >= p.width || gid.y >= p.height) return;
   float2 halfCoord = (float2(gid) + 0.5f) * halfLevel.levelScale;
@@ -539,6 +663,16 @@ kernel void pigment_integrated_reconstruct_mass(
   float4 h = halfYab.sample(integratedLinear, halfMode);
   float4 q = quarterYab.sample(integratedLinear, quarterMode);
   float4 mode = mix(h, q, quarterLevel.quarterBlend);
+  float4 dominant = mode;
+  float4 diagnostic = float4(0.0f);
+  if (p.massEstimator != 0) {
+    dominant = mix(halfDominant.sample(integratedLinear, halfMode),
+                   quarterDominant.sample(integratedLinear, quarterMode),
+                   quarterLevel.quarterBlend);
+    diagnostic = mix(halfDiagnostic.sample(integratedLinear, halfMode),
+                     quarterDiagnostic.sample(integratedLinear, quarterMode),
+                     quarterLevel.quarterBlend);
+  }
   float4 o = original.read(gid);
   float3 result = float3(mix(o.x, mode.x, clamp01(p.lumaAttraction)),
                          mix(o.y, mode.y, clamp01(p.chromaAttraction)),
@@ -547,6 +681,8 @@ kernel void pigment_integrated_reconstruct_mass(
   float magnitude = length(float3((result.x - o.x) / max(0.05f, abs(o.x) * 0.2f),
                                   result.y - o.y, result.z - o.z));
   attraction.write(float4(magnitude), gid);
+  dominantFull.write(float4(dominant.xyz, o.w), gid);
+  diagnosticFull.write(diagnostic, gid);
 }
 
 kernel void pigment_integrated_boundary_extinction(
@@ -630,6 +766,8 @@ kernel void pigment_integrated_final(
     texture2d<float, access::read> mediumBlur [[texture(14)]],
     texture2d<float, access::read> broadBlur [[texture(15)]],
     texture2d<float, access::read> finalYab [[texture(16)]],
+    texture2d<float, access::read> dominantMode [[texture(17)]],
+    texture2d<float, access::read> modeDiagnostic [[texture(18)]],
     uint2 gid [[thread_position_in_grid]]) {
   if (gid.x >= p.width || gid.y >= p.height) return;
   float4 o = original.read(gid);
@@ -664,6 +802,12 @@ kernel void pigment_integrated_final(
   else if (view == 18) rgb = integratedYabToRgb(chromaResult.read(gid).xyz, p);
   else if (view == 19) rgb = clamp(float3(0.5f) + 0.45f *
       integratedYabToRgb(finalYab.read(gid).xyz - o.xyz, p), 0.0f, 1.0f);
+  else if (view == 20) rgb = float3(clamp01(modeDiagnostic.read(gid).x));
+  else if (view == 21) rgb = integratedYabToRgb(dominantMode.read(gid).xyz, p);
+  else if (view == 22) rgb = float3(clamp01(modeDiagnostic.read(gid).y));
+  else if (view == 23) rgb = float3(clamp01(modeDiagnostic.read(gid).z));
+  else if (view == 24) rgb = float3(clamp01(modeDiagnostic.read(gid).w));
+  else if (view == 25 || view == 26) rgb = integratedYabToRgb(finalYab.read(gid).xyz, p);
   else rgb = mix(integratedYabToRgb(o.xyz, p), integratedYabToRgb(finalYab.read(gid).xyz, p),
                  clamp01(p.mix));
   float alpha = o.w;

@@ -42,3 +42,9 @@ part of processing.
 `fruit-grapes.png` and `laundry-cloth.png` were generated as fixed research fixtures
 with the built-in image generator. Their generation prompts and the present visual
 assessment are recorded in `docs/Phase3IntegratedPigment.md`.
+
+Phase 3.1 preserves the `*-weighted-mean.png` files as the failed smoothing baseline
+and adds `*-representative-mode.png`. Density, dominant-mode, confidence,
+representative-distance, and candidate-competition views expose why a population was
+selected. The validation scene defaults to Representative Mode and uses deliberately
+aggressive continuous settings for the grape/laundry acceptance comparison.

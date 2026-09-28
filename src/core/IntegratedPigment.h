@@ -11,7 +11,8 @@ namespace pigment {
 enum class PigmentComparisonMode {
   Original = 0,
   GuidedDetailCollapse,
-  IntegratedPigment
+  WeightedMeanPigment,
+  RepresentativeModePigment
 };
 
 enum class PigmentDebugView {
@@ -34,7 +35,14 @@ enum class PigmentDebugView {
   MediumResidual,
   InternalVariation,
   PreReintegration,
-  DifferenceFromOriginal
+  DifferenceFromOriginal,
+  LocalDensity,
+  WinningDominantMode,
+  ModeConfidence,
+  RepresentativeDistance,
+  CandidateCompetition,
+  LegacyWeightedMean,
+  RepresentativeModeResult
 };
 
 struct IntegratedPigmentParams {
@@ -68,6 +76,7 @@ struct IntegratedPigmentParams {
   float chromaEdgeRespect = 0.6f;
 
   float regionSoftness = 0.5f;
+  float modeSelectivity = 0.65f;
   float boundaryScale = 12.0f;
   float veilTonalBias = 0.0f;
   float chromaLumaCoupling = 0.6f;
@@ -75,7 +84,7 @@ struct IntegratedPigmentParams {
   bool invertMask = false;
   bool premultiplied = false;
   float mix = 1.0f;
-  PigmentComparisonMode comparison = PigmentComparisonMode::IntegratedPigment;
+  PigmentComparisonMode comparison = PigmentComparisonMode::RepresentativeModePigment;
   PigmentDebugView debugView = PigmentDebugView::Final;
 };
 
@@ -104,5 +113,14 @@ void softRegionMassReference(ConstYabPlanes source, YabPlanes destination,
                              ScalarFieldView boundaryProtection,
                              const IntegratedPigmentParams& params,
                              const ExecutionContext& execution = {});
+
+// Density-seeking comparison reference. Candidate density is measured against the
+// same physical 9x9 support, then the four strongest source-population candidates
+// are blended with a selectivity-controlled softmax rather than averaged globally.
+void representativeRegionMassReference(ConstYabPlanes source, YabPlanes destination,
+                                       ScalarFieldView processingStrength,
+                                       ScalarFieldView boundaryProtection,
+                                       const IntegratedPigmentParams& params,
+                                       const ExecutionContext& execution = {});
 
 }  // namespace pigment

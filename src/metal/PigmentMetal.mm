@@ -52,14 +52,14 @@ struct GpuParams {
 struct GpuIntegratedParams {
   std::uint32_t width, height, sourceComponents, destinationComponents;
   std::uint32_t hasMask, maskComponents, premultiplied, invertMask;
-  std::uint32_t comparisonMode, debugView, veilSeed, reserved;
+  std::uint32_t comparisonMode, debugView, veilSeed, massEstimator;
   float amount, massScale, massStrength, toneSimilarity, chromaSimilarity;
   float lumaAttraction, chromaAttraction;
   float structurePreserve, boundaryPreserve, boundaryExtinction, boundarySoftness;
   float veilAmount, veilScale, veilIrregularity, veilContrast;
   float detailCleanup, fineDetail, mediumDetail, internalVariation;
   float chromaMigration, chromaScale, chromaEdgeRespect;
-  float regionSoftness, boundaryScale, veilTonalBias, chromaLumaCoupling, mix;
+  float regionSoftness, modeSelectivity, boundaryScale, veilTonalBias, chromaLumaCoupling, mix;
   float renderScaleX, renderScaleY, pixelAspect, originX, originY;
   float whiteX, whiteZ;
   float rgbToXyz[9];
@@ -115,6 +115,8 @@ struct DeviceResources {
                              "pigment_integrated_rgb_to_yab", "pigment_integrated_structure",
                              "pigment_integrated_fields", "pigment_integrated_downsample",
                              "pigment_integrated_region_iteration",
+                             "pigment_integrated_local_density",
+                             "pigment_integrated_representative_iteration",
                              "pigment_integrated_reconstruct_mass",
                              "pigment_integrated_boundary_extinction",
                              "pigment_integrated_chroma", "pigment_integrated_reintegrate",
@@ -139,7 +141,7 @@ struct DeviceResources {
     }
   }
 
-  bool valid() const { return library != nil && pipelines.size() == 21; }
+  bool valid() const { return library != nil && pipelines.size() == 23; }
 };
 
 std::mutex gRegistryMutex;
@@ -371,6 +373,9 @@ GpuIntegratedParams makeIntegratedParams(const IntegratedMetalExecutionRequest& 
   result.comparisonMode = static_cast<std::uint32_t>(p.comparison);
   result.debugView = static_cast<std::uint32_t>(p.debugView);
   result.veilSeed = static_cast<std::uint32_t>(p.veilSeed);
+  result.massEstimator = (p.comparison == PigmentComparisonMode::RepresentativeModePigment ||
+      p.debugView == PigmentDebugView::RepresentativeModeResult) ? 1u : 0u;
+  if (p.debugView == PigmentDebugView::LegacyWeightedMean) result.massEstimator = 0u;
   result.amount = p.amount; result.massScale = p.massScale;
   result.massStrength = p.massStrength; result.toneSimilarity = p.toneSimilarity;
   result.chromaSimilarity = p.chromaSimilarity; result.lumaAttraction = p.lumaAttraction;
@@ -382,7 +387,8 @@ GpuIntegratedParams makeIntegratedParams(const IntegratedMetalExecutionRequest& 
   result.fineDetail = p.fineDetail; result.mediumDetail = p.mediumDetail;
   result.internalVariation = p.internalVariation; result.chromaMigration = p.chromaMigration;
   result.chromaScale = p.chromaScale; result.chromaEdgeRespect = p.chromaEdgeRespect;
-  result.regionSoftness = p.regionSoftness; result.boundaryScale = p.boundaryScale;
+  result.regionSoftness = p.regionSoftness; result.modeSelectivity = p.modeSelectivity;
+  result.boundaryScale = p.boundaryScale;
   result.veilTonalBias = p.veilTonalBias; result.chromaLumaCoupling = p.chromaLumaCoupling;
   result.mix = p.mix;
   result.renderScaleX = static_cast<float>(request.geometry.renderScaleX);
@@ -830,8 +836,8 @@ struct MetalInstance::Impl {
         cachedIntegratedHeight == height;
     NSArray<id<MTLTexture>>* textures = cachedIntegratedTextures;
     if (!reused) {
-      NSMutableArray<id<MTLTexture>>* allocated = [NSMutableArray arrayWithCapacity:49];
-      for (int i = 0; i < 28; ++i)
+      NSMutableArray<id<MTLTexture>>* allocated = [NSMutableArray arrayWithCapacity:53];
+      for (int i = 0; i < 30; ++i)
         [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, width, height)];
       for (int i = 0; i < 9; ++i)
         [allocated addObject:texture(device, MTLPixelFormatR32Float, width, height)];
@@ -843,8 +849,14 @@ struct MetalInstance::Impl {
         [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, quarterWidth, quarterHeight)];
       for (int i = 0; i < 2; ++i)
         [allocated addObject:texture(device, MTLPixelFormatRG32Float, quarterWidth, quarterHeight)];
+      [allocated addObject:texture(device, MTLPixelFormatR32Float, halfWidth, halfHeight)];
+      [allocated addObject:texture(device, MTLPixelFormatR32Float, quarterWidth, quarterHeight)];
+      for (int i = 0; i < 2; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, halfWidth, halfHeight)];
+      for (int i = 0; i < 2; ++i)
+        [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, quarterWidth, quarterHeight)];
       textures = [allocated copy];
-      if (textures.count != 45) {
+      if (textures.count != 53) {
         diagnostics.failure = MetalFailure::Allocation;
         diagnostics.message = "Could not allocate integrated Metal scratch textures";
         return false;
@@ -876,14 +888,18 @@ struct MetalInstance::Impl {
     id<MTLTexture> meanWg = textures[20], meanWgg = textures[21], meanWgp = textures[22];
     id<MTLTexture> coeffA = textures[23], coeffB = textures[24], filtered = textures[25];
     id<MTLTexture> cleanupA = textures[26], cleanupB = textures[27];
-    id<MTLTexture> protection = textures[28], permeability = textures[29];
-    id<MTLTexture> veil = textures[30], massField = textures[31], extinctionField = textures[32];
-    id<MTLTexture> chromaField = textures[33], detailField = textures[34];
-    id<MTLTexture> attraction = textures[35], meanWeight = textures[36];
-    id<MTLTexture> halfYabA = textures[37], halfYabB = textures[38];
-    id<MTLTexture> halfPosA = textures[39], halfPosB = textures[40];
-    id<MTLTexture> quarterYabA = textures[41], quarterYabB = textures[42];
-    id<MTLTexture> quarterPosA = textures[43], quarterPosB = textures[44];
+    id<MTLTexture> dominantFull = textures[28], diagnosticFull = textures[29];
+    id<MTLTexture> protection = textures[30], permeability = textures[31];
+    id<MTLTexture> veil = textures[32], massField = textures[33], extinctionField = textures[34];
+    id<MTLTexture> chromaField = textures[35], detailField = textures[36];
+    id<MTLTexture> attraction = textures[37], meanWeight = textures[38];
+    id<MTLTexture> halfYabA = textures[39], halfYabB = textures[40];
+    id<MTLTexture> halfPosA = textures[41], halfPosB = textures[42];
+    id<MTLTexture> quarterYabA = textures[43], quarterYabB = textures[44];
+    id<MTLTexture> quarterPosA = textures[45], quarterPosB = textures[46];
+    id<MTLTexture> halfDensity = textures[47], quarterDensity = textures[48];
+    id<MTLTexture> halfDominant = textures[49], halfDiagnostic = textures[50];
+    id<MTLTexture> quarterDominant = textures[51], quarterDiagnostic = textures[52];
 
     id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
     if (!commandBuffer) {
@@ -963,35 +979,63 @@ struct MetalInstance::Impl {
     initializeLevel(quarterLevel, quarterYabA, quarterPosA);
     auto iterateLevel = [&](const GpuRegionLevelParams& level,
                             id<MTLTexture> yabA, id<MTLTexture> yabB,
-                            id<MTLTexture> posA, id<MTLTexture> posB) {
+                            id<MTLTexture> posA, id<MTLTexture> posB,
+                            id<MTLTexture> density, id<MTLTexture> dominant,
+                            id<MTLTexture> diagnostic) {
       for (int iteration = 0; iteration < 3; ++iteration) {
-        dispatch(commandBuffer, pipeline("pigment_integrated_region_iteration"),
-                 level.width, level.height, [&](id<MTLComputeCommandEncoder> e) {
-          [e setTexture:yabA atIndex:0]; [e setTexture:posA atIndex:1];
-          [e setTexture:protection atIndex:2]; [e setTexture:massField atIndex:3];
-          [e setBytes:&params length:sizeof(params) atIndex:0];
-          [e setBytes:&level length:sizeof(level) atIndex:1];
-          [e setTexture:yabB atIndex:4]; [e setTexture:posB atIndex:5];
-        });
+        if (params.massEstimator != 0) {
+          dispatch(commandBuffer, pipeline("pigment_integrated_local_density"),
+                   level.width, level.height, [&](id<MTLComputeCommandEncoder> e) {
+            [e setTexture:yabA atIndex:0]; [e setTexture:posA atIndex:1];
+            [e setTexture:protection atIndex:2]; [e setTexture:extinctionField atIndex:3];
+            [e setBytes:&params length:sizeof(params) atIndex:0];
+            [e setBytes:&level length:sizeof(level) atIndex:1]; [e setTexture:density atIndex:4];
+          });
+          dispatch(commandBuffer, pipeline("pigment_integrated_representative_iteration"),
+                   level.width, level.height, [&](id<MTLComputeCommandEncoder> e) {
+            [e setTexture:yabA atIndex:0]; [e setTexture:posA atIndex:1];
+            [e setTexture:density atIndex:2]; [e setTexture:protection atIndex:3];
+            [e setTexture:extinctionField atIndex:4]; [e setTexture:massField atIndex:5];
+            [e setBytes:&params length:sizeof(params) atIndex:0];
+            [e setBytes:&level length:sizeof(level) atIndex:1];
+            [e setTexture:yabB atIndex:6]; [e setTexture:posB atIndex:7];
+            [e setTexture:dominant atIndex:8]; [e setTexture:diagnostic atIndex:9];
+          });
+        } else {
+          dispatch(commandBuffer, pipeline("pigment_integrated_region_iteration"),
+                   level.width, level.height, [&](id<MTLComputeCommandEncoder> e) {
+            [e setTexture:yabA atIndex:0]; [e setTexture:posA atIndex:1];
+            [e setTexture:protection atIndex:2]; [e setTexture:massField atIndex:3];
+            [e setBytes:&params length:sizeof(params) atIndex:0];
+            [e setBytes:&level length:sizeof(level) atIndex:1];
+            [e setTexture:yabB atIndex:4]; [e setTexture:posB atIndex:5];
+          });
+        }
         std::swap(yabA, yabB); std::swap(posA, posB);
       }
-      return @[yabA, posA];
+      return @[yabA, posA, dominant, diagnostic];
     };
     stageStart = Clock::now();
     NSArray<id<MTLTexture>>* halfFinal =
-        iterateLevel(halfLevel, halfYabA, halfYabB, halfPosA, halfPosB);
+        iterateLevel(halfLevel, halfYabA, halfYabB, halfPosA, halfPosB,
+                     halfDensity, halfDominant, halfDiagnostic);
     NSArray<id<MTLTexture>>* quarterFinal =
-        iterateLevel(quarterLevel, quarterYabA, quarterYabB, quarterPosA, quarterPosB);
+        iterateLevel(quarterLevel, quarterYabA, quarterYabB, quarterPosA, quarterPosB,
+                     quarterDensity, quarterDominant, quarterDiagnostic);
     halfYabA = halfFinal[0]; halfPosA = halfFinal[1];
     quarterYabA = quarterFinal[0]; quarterPosA = quarterFinal[1];
     dispatch(commandBuffer, pipeline("pigment_integrated_reconstruct_mass"), width, height,
              [&](id<MTLComputeCommandEncoder> e) {
       [e setTexture:original atIndex:0]; [e setTexture:halfYabA atIndex:1];
       [e setTexture:halfPosA atIndex:2]; [e setTexture:quarterYabA atIndex:3];
-      [e setTexture:quarterPosA atIndex:4]; [e setBytes:&params length:sizeof(params) atIndex:0];
+      [e setTexture:quarterPosA atIndex:4]; [e setTexture:halfDominant atIndex:5];
+      [e setTexture:quarterDominant atIndex:6]; [e setTexture:halfDiagnostic atIndex:7];
+      [e setTexture:quarterDiagnostic atIndex:8];
+      [e setBytes:&params length:sizeof(params) atIndex:0];
       [e setBytes:&halfLevel length:sizeof(halfLevel) atIndex:1];
       [e setBytes:&quarterLevel length:sizeof(quarterLevel) atIndex:2];
-      [e setTexture:mass atIndex:5]; [e setTexture:attraction atIndex:6];
+      [e setTexture:mass atIndex:9]; [e setTexture:attraction atIndex:10];
+      [e setTexture:dominantFull atIndex:11]; [e setTexture:diagnosticFull atIndex:12];
     });
     diagnostics.iterationsEncodeMs = milliseconds(stageStart, Clock::now());
 
@@ -1115,6 +1159,7 @@ struct MetalInstance::Impl {
       [e setTexture:chromaResult atIndex:12]; [e setTexture:fineBlur atIndex:13];
       [e setTexture:mediumBlur atIndex:14]; [e setTexture:broadBlur atIndex:15];
       [e setTexture:finalYab atIndex:16];
+      [e setTexture:dominantFull atIndex:17]; [e setTexture:diagnosticFull atIndex:18];
     });
     diagnostics.yabToRgbEncodeMs = milliseconds(stageStart, Clock::now());
     diagnostics.commandEncodingMs = milliseconds(encodeStart, Clock::now());

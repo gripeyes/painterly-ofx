@@ -166,4 +166,113 @@ void softRegionMassReference(ConstYabPlanes source, YabPlanes destination,
   }
 }
 
+void representativeRegionMassReference(ConstYabPlanes source, YabPlanes destination,
+                                       ScalarFieldView processingStrength,
+                                       ScalarFieldView boundaryProtection,
+                                       const IntegratedPigmentParams& p,
+                                       const ExecutionContext& execution) {
+  const RectI bounds = source.y.bounds;
+  const int width = bounds.width();
+  const int height = bounds.height();
+  const std::size_t count = static_cast<std::size_t>(width) * height;
+  std::vector<float> y(count), a(count), b(count), px(count), py(count);
+  std::vector<float> ny(count), na(count), nb(count), npx(count), npy(count);
+  auto index = [&](int x, int yy) {
+    return static_cast<std::size_t>(yy - bounds.y1) * width + (x - bounds.x1);
+  };
+  for (int yy = bounds.y1; yy < bounds.y2; ++yy) for (int x = bounds.x1; x < bounds.x2; ++x) {
+    const auto i = index(x, yy);
+    y[i] = source.y.at(x, yy); a[i] = source.a.at(x, yy); b[i] = source.b.at(x, yy);
+    px[i] = static_cast<float>(x); py[i] = static_cast<float>(yy);
+  }
+  const float radius = std::max(0.25f, p.massScale);
+  const float tone = std::max(1.0e-5f, p.toneSimilarity);
+  const float chroma = std::max(1.0e-5f, p.chromaSimilarity);
+  const float softness = std::max(0.1f, p.regionSoftness);
+  const float temperature = 0.6f * std::exp2(-4.0f * clamp01(p.modeSelectivity)) + 0.025f;
+
+  struct Candidate { std::size_t sample = 0; float score = -1.0f; };
+  for (int iteration = 0; iteration < 3; ++iteration) {
+    if (execution.cancelled && execution.cancelled()) return;
+    auto rows = [&](int begin, int end) {
+      for (int yy = begin; yy < end; ++yy) for (int x = bounds.x1; x < bounds.x2; ++x) {
+        const auto i = index(x, yy);
+        std::size_t samples[81];
+        int sampleCount = 0;
+        for (int gy = -4; gy <= 4; ++gy) for (int gx = -4; gx <= 4; ++gx) {
+          const int sx = std::max(bounds.x1, std::min(bounds.x2 - 1,
+              static_cast<int>(std::lround(px[i] + radius * gx / 4.0f))));
+          const int sy = std::max(bounds.y1, std::min(bounds.y2 - 1,
+              static_cast<int>(std::lround(py[i] + radius * gy / 4.0f))));
+          samples[sampleCount++] = index(sx, sy);
+        }
+        Candidate top[4];
+        const float localYScale = std::max(0.05f, std::abs(y[i]) * 0.2f);
+        for (int candidateIndex = 0; candidateIndex < sampleCount; ++candidateIndex) {
+          const auto c = samples[candidateIndex];
+          double density = 0.0;
+          for (int neighborIndex = 0; neighborIndex < sampleCount; ++neighborIndex) {
+            const auto n = samples[neighborIndex];
+            const float dx = (px[n] - px[c]) / radius;
+            const float dy = (py[n] - py[c]) / radius;
+            const float ys = std::max({localYScale, std::abs(y[c]) * 0.2f,
+                                       std::abs(y[n]) * 0.2f});
+            const float yd = (y[n] - y[c]) / (tone * ys);
+            const float ad = (a[n] - a[c]) / chroma;
+            const float bd = (b[n] - b[c]) / chroma;
+            density += std::exp(-0.5f * std::min(80.0f,
+                (dx * dx + dy * dy) / softness + yd * yd + ad * ad + bd * bd));
+          }
+          const float dx = (px[c] - px[i]) / radius;
+          const float dy = (py[c] - py[i]) / radius;
+          const float yd = (y[c] - y[i]) / (tone * localYScale);
+          const float ad = (a[c] - a[i]) / chroma;
+          const float bd = (b[c] - b[i]) / chroma;
+          const int cx = std::max(bounds.x1, std::min(bounds.x2 - 1,
+              static_cast<int>(std::lround(px[c]))));
+          const int cy = std::max(bounds.y1, std::min(bounds.y2 - 1,
+              static_cast<int>(std::lround(py[c]))));
+          const float protection = std::max(boundaryProtection.at(x, yy),
+                                             boundaryProtection.at(cx, cy));
+          const float eligibility = std::exp(-0.5f * std::min(80.0f,
+              (dx * dx + dy * dy) / softness + yd * yd + ad * ad + bd * bd)) *
+              std::max(0.001f, 1.0f - clamp01(p.boundaryPreserve) * protection);
+          Candidate value{c, static_cast<float>(density / sampleCount) * eligibility};
+          for (auto& entry : top) {
+            if (value.score > entry.score) { std::swap(value, entry); }
+          }
+        }
+        const float maximum = top[0].score;
+        double total = 0.0, targetY = 0.0, targetA = 0.0, targetB = 0.0;
+        double targetX = 0.0, targetPy = 0.0;
+        for (const auto& candidate : top) {
+          const double weight = std::exp((candidate.score - maximum) / temperature);
+          total += weight; targetY += weight * y[candidate.sample];
+          targetA += weight * a[candidate.sample]; targetB += weight * b[candidate.sample];
+          targetX += weight * px[candidate.sample]; targetPy += weight * py[candidate.sample];
+        }
+        const float inverse = static_cast<float>(1.0 / std::max(1.0e-12, total));
+        const float gain = clamp01(p.massStrength) * clamp01(processingStrength.at(x, yy));
+        ny[i] = y[i] + gain * (static_cast<float>(targetY) * inverse - y[i]);
+        na[i] = a[i] + gain * (static_cast<float>(targetA) * inverse - a[i]);
+        nb[i] = b[i] + gain * (static_cast<float>(targetB) * inverse - b[i]);
+        npx[i] = px[i] + gain * (static_cast<float>(targetX) * inverse - px[i]);
+        npy[i] = py[i] + gain * (static_cast<float>(targetPy) * inverse - py[i]);
+      }
+    };
+    if (execution.parallelRows) execution.parallelRows(bounds.y1, bounds.y2, rows);
+    else rows(bounds.y1, bounds.y2);
+    y.swap(ny); a.swap(na); b.swap(nb); px.swap(npx); py.swap(npy);
+  }
+  for (int yy = bounds.y1; yy < bounds.y2; ++yy) for (int x = bounds.x1; x < bounds.x2; ++x) {
+    const auto i = index(x, yy);
+    destination.y.at(x, yy) = source.y.at(x, yy) + clamp01(p.lumaAttraction) *
+        (y[i] - source.y.at(x, yy));
+    destination.a.at(x, yy) = source.a.at(x, yy) + clamp01(p.chromaAttraction) *
+        (a[i] - source.a.at(x, yy));
+    destination.b.at(x, yy) = source.b.at(x, yy) + clamp01(p.chromaAttraction) *
+        (b[i] - source.b.at(x, yy));
+  }
+}
+
 }  // namespace pigment
