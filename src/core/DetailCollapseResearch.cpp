@@ -1,6 +1,7 @@
 #include "core/DetailCollapseResearch.h"
 
 #include "core/RollingYabMass.h"
+#include "core/AcceleratedYabMass.h"
 
 #include <algorithm>
 #include <array>
@@ -164,12 +165,25 @@ void processDetailCollapseResearch(
       debug.preReintegrationMass = &capturedView;
   }
 
-  detail::RollingYabMassOperator rolling(rollingOptions);
+  const bool accelerated = p.backend == DetailCollapseBackend::GuidedCpu ||
+      p.backend == DetailCollapseBackend::GuidedMetal ||
+      p.backend == DetailCollapseBackend::DomainTransformCpu ||
+      p.backend == DetailCollapseBackend::DomainTransformMetal;
   const auto strengthConst = static_cast<const OwnedPlane&>(processingStrength).view();
   const auto boundaryConst = static_cast<const OwnedPlane&>(boundaryProtection).view();
   const SpatialOperation operation{originalConst, result.view(), strengthConst,
                                    boundaryConst, src.bounds, geometry};
-  rolling.applyWithDebug(operation, exec, debug);
+  if (accelerated) {
+    const auto algorithm = (p.backend == DetailCollapseBackend::GuidedCpu ||
+                            p.backend == DetailCollapseBackend::GuidedMetal)
+        ? detail::AcceleratedMassAlgorithm::Guided
+        : detail::AcceleratedMassAlgorithm::DomainTransform;
+    detail::AcceleratedYabMassOperator mass(algorithm, rollingOptions);
+    mass.applyWithDebug(operation, exec, debug);
+  } else {
+    detail::RollingYabMassOperator mass(rollingOptions);
+    mass.applyWithDebug(operation, exec, debug);
+  }
 
   const ConstYabPlanes finalYab = static_cast<const OwnedYabPlanes&>(result).view();
   ConstYabPlanes displayYab = finalYab;

@@ -3,15 +3,21 @@
 #include "core/DetailCollapseResearch.h"
 #include "ofx/OfxImageHelpers.h"
 #include "ofx/ParameterHelpers.h"
+#include "ofxGPURender.h"
 #include "ofxsMultiThread.h"
+#ifdef PIGMENT_ENABLE_METAL
+#include "metal/PigmentMetal.h"
+#endif
 
 #include <algorithm>
 #include <memory>
+#include <sstream>
 
 namespace pigment::plugin {
 namespace {
 
 constexpr const char* kAmount = "amount";
+constexpr const char* kBackend = "backend";
 constexpr const char* kMassScale = "massScale";
 constexpr const char* kStructureScale = "structureScale";
 constexpr const char* kMassStrength = "massStrength";
@@ -62,6 +68,7 @@ class DetailCollapseEffect final : public OFX::ImageEffect {
         source_(fetchClip(kOfxImageEffectSimpleSourceClipName)) {
     if (getContext() == OFX::eContextGeneral) mask_ = fetchClip(kMaskClip);
     amount_ = fetchDoubleParam(kAmount);
+    backend_ = fetchChoiceParam(kBackend);
     massScale_ = fetchDoubleParam(kMassScale);
     structureScale_ = fetchDoubleParam(kStructureScale);
     massStrength_ = fetchDoubleParam(kMassStrength);
@@ -93,6 +100,8 @@ class DetailCollapseEffect final : public OFX::ImageEffect {
                              OfxRectD& rod) override;
   void getRegionsOfInterest(const OFX::RegionsOfInterestArguments& args,
                             OFX::RegionOfInterestSetter& rois) override;
+  void purgeCaches() override;
+  void endSequenceRender(const OFX::EndSequenceRenderArguments&) override;
 
  private:
   DetailCollapseResearchParams parameters(double time) const;
@@ -109,11 +118,18 @@ class DetailCollapseEffect final : public OFX::ImageEffect {
                    *rangeMaximum_ = nullptr, *rangeSoftness_ = nullptr,
                    *mix_ = nullptr;
   OFX::BooleanParam *rangeEnabled_ = nullptr, *invertMask_ = nullptr;
-  OFX::ChoiceParam *workingGamut_ = nullptr, *debugView_ = nullptr;
+  OFX::ChoiceParam *backend_ = nullptr, *workingGamut_ = nullptr,
+                   *debugView_ = nullptr;
+#ifdef PIGMENT_ENABLE_METAL
+  std::unique_ptr<metal::MetalInstance> metal_;
+#endif
 };
 
 DetailCollapseResearchParams DetailCollapseEffect::parameters(double time) const {
   DetailCollapseResearchParams p;
+  int backend = 0;
+  backend_->getValueAtTime(time, backend);
+  p.backend = static_cast<DetailCollapseBackend>(std::max(0, std::min(4, backend)));
   p.amount = static_cast<float>(amount_->getValueAtTime(time));
   p.massScale = static_cast<float>(massScale_->getValueAtTime(time));
   p.structureScale = static_cast<float>(structureScale_->getValueAtTime(time));
@@ -189,14 +205,82 @@ void DetailCollapseEffect::render(const OFX::RenderArguments& args) {
     maskImage.reset(mask_->fetchImage(args.time));
     if (!maskImage || maskImage->getPixelDepth() != OFX::eBitDepthFloat)
       OFX::throwSuiteStatusException(kOfxStatErrUnsupported);
-    maskView = ofx::makeMaskView(*maskImage);
-    maskPointer = &maskView;
   }
 
   auto p = parameters(args.time);
   p.premultiplied = source->getPreMultiplication() == OFX::eImagePreMultiplied;
   const ImageGeometry geometry{source->getPixelAspectRatio(), args.renderScale.x,
                                args.renderScale.y};
+
+#ifdef PIGMENT_ENABLE_METAL
+  const bool guidedMetal = p.backend == DetailCollapseBackend::GuidedMetal;
+  const bool domainMetal = p.backend == DetailCollapseBackend::DomainTransformMetal;
+  const bool nativeIdentity = args.isEnabledMetalRender &&
+      p.debugView == DetailCollapseDebugView::Final &&
+      (p.amount == 0.0f || p.mix == 0.0f);
+  if (args.isEnabledMetalRender && !guidedMetal && !nativeIdentity) {
+    if (domainMetal)
+      setPersistentMessage(OFX::Message::eMessageWarning, "PigmentMetal",
+          "Domain Transform Metal is reserved in this research build; requesting a CPU-backed host retry.");
+    OFX::throwSuiteStatusException(kOfxStatGPURenderFailed);
+  }
+  if (guidedMetal || nativeIdentity) {
+    if (!metal_) metal_ = std::make_unique<metal::MetalInstance>();
+    const auto makeMetalView = [](OFX::Image& image) {
+      const RectI bounds = ofx::toRect(image.getBounds());
+      const std::size_t storageBytes = image.getRowBytes() > 0
+          ? static_cast<std::size_t>(image.getRowBytes()) * bounds.height() : 0;
+      return metal::MetalImageView{image.getPixelData(), storageBytes,
+          image.getRowBytes(), bounds, image.getPixelComponentCount()};
+    };
+    metal::MetalExecutionRequest request;
+    request.source = makeMetalView(*source);
+    request.destination = makeMetalView(*destination);
+    request.nativeHostBuffers = args.isEnabledMetalRender;
+    request.hostCommandQueue = args.pMetalCmdQ;
+    request.renderWindow = ofx::toRect(args.renderWindow);
+    request.params = p;
+    request.geometry = geometry;
+    if (maskImage) {
+      request.mask = makeMetalView(*maskImage);
+      request.hasMask = true;
+    }
+    if (metal_->render(request)) {
+      clearPersistentMessage();
+      return;
+    }
+    const auto& diagnostics = metal_->diagnostics();
+    if (args.isEnabledMetalRender)
+      OFX::throwSuiteStatusException(kOfxStatGPURenderFailed);
+    std::ostringstream warning;
+    warning << "Guided Metal failed (" << diagnostics.message
+            << "); using explicit Guided CPU fallback for this CPU-backed render.";
+    setPersistentMessage(OFX::Message::eMessageWarning, "PigmentMetal", warning.str());
+    p.backend = DetailCollapseBackend::GuidedCpu;
+  } else if (domainMetal) {
+    setPersistentMessage(OFX::Message::eMessageWarning, "PigmentMetal",
+        "Domain Transform Metal is reserved in this research build; using Domain Transform CPU.");
+    p.backend = DetailCollapseBackend::DomainTransformCpu;
+  } else {
+    clearPersistentMessage();
+  }
+#else
+  if (args.isEnabledMetalRender) OFX::throwSuiteStatusException(kOfxStatGPURenderFailed);
+  if (p.backend == DetailCollapseBackend::GuidedMetal) {
+    setPersistentMessage(OFX::Message::eMessageWarning, "PigmentMetal",
+        "This build has no Metal backend; using Guided CPU.");
+    p.backend = DetailCollapseBackend::GuidedCpu;
+  } else if (p.backend == DetailCollapseBackend::DomainTransformMetal) {
+    setPersistentMessage(OFX::Message::eMessageWarning, "PigmentMetal",
+        "This build has no Metal backend; using Domain Transform CPU.");
+    p.backend = DetailCollapseBackend::DomainTransformCpu;
+  }
+#endif
+
+  if (maskImage) {
+    maskView = ofx::makeMaskView(*maskImage);
+    maskPointer = &maskView;
+  }
   ExecutionContext execution;
   execution.cancelled = [this] { return abort(); };
   execution.parallelRows = [](int begin, int end, const RowFunction& function) {
@@ -210,6 +294,19 @@ void DetailCollapseEffect::render(const OFX::RenderArguments& args) {
   processDetailCollapseResearch(
       ofx::makeConstImageView(*source), ofx::makeImageView(*destination),
       ofx::toRect(args.renderWindow), p, geometry, maskPointer, execution);
+}
+
+void DetailCollapseEffect::purgeCaches() {
+#ifdef PIGMENT_ENABLE_METAL
+  if (metal_) metal_->releaseTransientResources();
+#endif
+}
+
+void DetailCollapseEffect::endSequenceRender(
+    const OFX::EndSequenceRenderArguments&) {
+#ifdef PIGMENT_ENABLE_METAL
+  if (metal_) metal_->releaseTransientResources();
+#endif
 }
 
 void addSupportedComponents(OFX::ClipDescriptor* clip) {
@@ -228,6 +325,19 @@ void defineWorkingGamut(OFX::ImageEffectDescriptor& descriptor) {
   gamut->appendOption("Linear Rec.2020");
   gamut->appendOption("Display P3 D65 Primaries");
   gamut->setDefault(0);
+}
+
+void defineBackend(OFX::ImageEffectDescriptor& descriptor) {
+  auto* backend = descriptor.defineChoiceParam(kBackend);
+  backend->setLabels("Backend", "Backend", "Backend");
+  backend->setScriptName(kBackend);
+  backend->setHint("Temporary Stage 2 implementation backend; Reference preserves the original visual checkpoint");
+  backend->appendOption("Reference Bilateral CPU");
+  backend->appendOption("Guided CPU");
+  backend->appendOption("Domain Transform CPU");
+  backend->appendOption("Guided Metal");
+  backend->appendOption("Domain Transform Metal (CPU fallback)");
+  backend->setDefault(0);
 }
 
 void defineDebugView(OFX::ImageEffectDescriptor& descriptor) {
@@ -265,6 +375,9 @@ void DetailCollapseFactory::describe(OFX::ImageEffectDescriptor& descriptor) {
   descriptor.setSupportsMultipleClipDepths(false);
   descriptor.setSupportsMultipleClipPARs(false);
   descriptor.setRenderThreadSafety(OFX::eRenderFullySafe);
+#ifdef PIGMENT_ENABLE_METAL
+  descriptor.setSupportsMetalRender(true);
+#endif
 }
 
 void DetailCollapseFactory::describeInContext(OFX::ImageEffectDescriptor& descriptor,
@@ -283,6 +396,7 @@ void DetailCollapseFactory::describeInContext(OFX::ImageEffectDescriptor& descri
   auto* output = descriptor.defineClip(kOfxImageEffectOutputClipName);
   addSupportedComponents(output);
 
+  defineBackend(descriptor);
   ofx::defineDouble(descriptor, kAmount, "Amount", 0, 0, 1, 0, 1, 0.01,
                     "Overall Mass Formation processing strength", OFX::eDoubleTypeScale);
   ofx::defineDouble(descriptor, kMassScale, "Mass Scale", 4, 0.25, 128, 0.25, 32,

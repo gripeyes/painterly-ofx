@@ -19,7 +19,7 @@ if not matches:
 
 node = nuke.createNode(matches[0], inpanel=False)
 required = {
-    "amount", "massScale", "structureScale", "massStrength",
+    "backend", "amount", "massScale", "structureScale", "massStrength",
     "toneSimilarity", "chromaSimilarity", "boundaryPreserve",
     "boundarySoftness", "structurePreserve", "internalVariation",
     "lumaMassing", "chromaMassing", "rangeEnabled", "rangeMinimum",
@@ -30,6 +30,7 @@ if missing:
     raise RuntimeError("Missing DetailCollapse controls: " + ", ".join(sorted(missing)))
 print("DETAIL_COLLAPSE_DISCOVERY_OK", node.Class())
 
+node["backend"].setValue(3)  # Guided Metal; CPU images still use explicit Metal staging.
 node["amount"].setValue(0.65)
 node["massScale"].setValue(2.5)
 node["structureScale"].setValue(5.0)

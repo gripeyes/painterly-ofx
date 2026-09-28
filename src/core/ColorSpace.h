@@ -7,6 +7,15 @@ namespace pigment {
 
 enum class WorkingGamut { ACEScg = 0, LinearRec709, LinearRec2020, DisplayP3D65 };
 
+struct OpponentMatrixData {
+  std::array<float, 9> rgbToXyz{};
+  std::array<float, 9> xyzToRgb{};
+  float whiteX = 1.0f;
+  float whiteZ = 1.0f;
+};
+
+OpponentMatrixData opponentMatrixData(WorkingGamut gamut);
+
 class OpponentTransform {
  public:
   virtual ~OpponentTransform() = default;
@@ -27,4 +36,3 @@ class MatrixOpponentTransform final : public OpponentTransform {
 };
 
 }  // namespace pigment
-

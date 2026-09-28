@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -168,12 +169,67 @@ void testPremultipliedEquivalenceAndMask() {
   }
 }
 
+void testReferenceGoldenOutput() {
+  const pigment::RectI bounds{-2, 3, 11, 12};
+  TestImage source(bounds, 4, 2), output(bounds, 4, 3);
+  fillImage(source, false);
+  auto params = activeParams();
+  params.backend = pigment::DetailCollapseBackend::ReferenceBilateralCpu;
+  pigment::processDetailCollapseResearch(
+      static_cast<const TestImage&>(source).view(), output.view(), bounds,
+      params, {}, nullptr);
+  std::uint64_t hash = 1469598103934665603ULL;
+  for (int y = bounds.y1; y < bounds.y2; ++y) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(output.view().pixel(bounds.x1, y));
+    const std::size_t byteCount = static_cast<std::size_t>(bounds.width() * 4) * sizeof(float);
+    for (std::size_t i = 0; i < byteCount; ++i) {
+      hash ^= bytes[i];
+      hash *= 1099511628211ULL;
+    }
+  }
+  check(hash == 5224062522461291877ULL,
+        "Reference Bilateral CPU golden output is unchanged");
+}
+
+void testAcceleratedBackends() {
+  const pigment::RectI bounds{0, 0, 19, 13};
+  TestImage source(bounds, 4), first(bounds, 4), second(bounds, 4);
+  fillImage(source, false);
+  for (const auto backend : {pigment::DetailCollapseBackend::GuidedCpu,
+                             pigment::DetailCollapseBackend::DomainTransformCpu}) {
+    auto params = activeParams();
+    params.backend = backend;
+    pigment::processDetailCollapseResearch(
+        static_cast<const TestImage&>(source).view(), first.view(), bounds,
+        params, {}, nullptr);
+    pigment::processDetailCollapseResearch(
+        static_cast<const TestImage&>(source).view(), second.view(), bounds,
+        params, {}, nullptr);
+    for (int y = bounds.y1; y < bounds.y2; ++y) {
+      check(std::memcmp(first.view().pixel(bounds.x1, y),
+                        second.view().pixel(bounds.x1, y),
+                        static_cast<std::size_t>(bounds.width() * 4) * sizeof(float)) == 0,
+            "accelerated CPU backend is deterministic");
+      for (int x = bounds.x1; x < bounds.x2; ++x) {
+        const float* result = first.view().pixel(x, y);
+        check(std::isfinite(result[0]) && std::isfinite(result[1]) &&
+                  std::isfinite(result[2]),
+              "accelerated CPU backend preserves finite HDR output");
+        check(result[3] == source.view().pixel(x, y)[3],
+              "accelerated CPU backend preserves alpha");
+      }
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
   testIdentityAndDomain();
   testAllDebugViewsAndAlpha();
   testPremultipliedEquivalenceAndMask();
+  testReferenceGoldenOutput();
+  testAcceleratedBackends();
   if (failures) {
     std::cerr << failures << " DetailCollapse test(s) failed\n";
     return 1;

@@ -1,20 +1,20 @@
 # Pigment OFX
 
-Pigment is a CPU OpenFX image-processing suite for controlled spatial treatment of
+Pigment is an OpenFX image-processing suite for controlled spatial treatment of
 photographic information. The bundle contains the production Stage 1
 **ChromaDiffusion** effect and a temporary **DetailCollapse (Research)** node used to
 evaluate the Stage 2 Rolling YAB Mass reference. Neither path applies a transfer
 function, LUT, gamut mapping, or HDR clamp.
 
-The bundle currently targets Apple Silicon. ChromaDiffusion has been validated with
-Nuke 17 and DaVinci Resolve Studio 21. DetailCollapse currently exposes only the
-Rolling YAB Mass research backend for Nuke visual evaluation; it is not a production
-DetailCollapse implementation. Mass Formation remains an internal mode of that node,
-not a separate public effect. DensityVeil is not implemented.
+The bundle currently targets Apple Silicon. DetailCollapse exposes the preserved
+bilateral reference, Guided CPU, Domain Transform CPU, Guided Metal, and a reserved
+Domain Transform Metal choice. It remains a research interface rather than the final
+DetailCollapse UI. Mass Formation is still an internal mode of that node, not a
+separate public effect. DensityVeil is not implemented.
 
 ## Build
 
-Requirements are CMake 3.25+, a C++17 compiler, Git, and the macOS SDK. CMake fetches
+Requirements are CMake 3.25+, Xcode's C++/Metal toolchains, Git, and the macOS SDK. CMake fetches
 the pinned OpenFX 1.5.1 source when `OPENFX_ROOT` is not provided.
 
 ```sh
@@ -38,10 +38,10 @@ cmake -S . -B build \
   -DPIGMENT_FETCH_OPENFX=OFF
 ```
 
-For a local install prefix:
+Nuke and Resolve scan `/Library/OFX/Plugins` by default on the validation machine:
 
 ```sh
-cmake --install build --prefix "$HOME/Library/OFX/Plugins"
+cmake --install build --prefix /Library/OFX/Plugins
 ```
 
 ## Nuke validation
@@ -70,16 +70,17 @@ automated visual-reference render can be repeated with:
 
 ## Resolve validation
 
-Install to a user-local OFX path, restart Resolve with that path enabled, then add
-ChromaDiffusion from the Color page's **Pigment** category:
+Install to the system OFX path and restart Resolve. Both Pigment identifiers should
+appear; DetailCollapse remains a development node:
 
 ```sh
-cmake --install build --prefix "$HOME/Library/OFX/Plugins"
-open -na "DaVinci Resolve" --env OFX_PLUGIN_PATH="$HOME/Library/OFX/Plugins"
+cmake --install build --prefix /Library/OFX/Plugins
+open -na "DaVinci Resolve"
 ```
 
-Resolve 21.1 has been checked for registry discovery, effect instantiation, parameter
-exposure, MediaIn/MediaOut connection, and a non-identity float render.
+Resolve Studio 21 discovers `org.painterlyofx.DetailCollapse`. Native Metal rendering
+is still a host-validation item; see the performance report before using this research
+backend for production work.
 
 ## Architecture
 
@@ -113,9 +114,22 @@ The reference deliberately keeps `Mass Scale` separate from `Structure Scale`.
 `buildStructureBoundaryField` simplifies its guide at Structure Scale before measuring
 significant boundaries, so raw edge magnitude alone does not decide what survives.
 The direct joint-bilateral rolling implementation requests the full source RoD and
-prioritizes correctness and visual evaluation over production performance.
+remains the immutable visual reference. The constant-time CPU alternatives and Guided
+Metal use the same fields, scale separation, reintegration, and debug-view contract.
 See [the Mass Formation research note](docs/MassFormationResearch.md) for the fixed
 architecture, literature basis, and remaining prototype order.
+
+## Performance harnesses
+
+`pigment_backend_benchmark` compares Reference, Guided CPU, and Domain Transform CPU.
+`pigment_metal_harness` measures no-copy/staged transfers, GPU duration, stage encoding,
+allocation reuse, and CPU/Metal parity. For example:
+
+```sh
+./build/pigment_backend_benchmark --backend guided --width 1920 --height 1080 --mass-scale 8
+PIGMENT_METAL_RESOURCE_DIR="$PWD/build" \
+  ./build/pigment_metal_harness --width 1920 --height 1080 --mass-scale 8 --verify
+```
 
 ## Color and alpha behavior
 

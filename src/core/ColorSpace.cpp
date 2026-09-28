@@ -49,6 +49,20 @@ MatrixOpponentTransform::MatrixOpponentTransform(WorkingGamut gamut)
   whiteZ_ /= whiteY;
 }
 
+OpponentMatrixData opponentMatrixData(WorkingGamut gamut) {
+  const M rgbToXyz = matrixFor(gamut);
+  const M xyzToRgb = inverse(rgbToXyz);
+  const double whiteY = rgbToXyz[3] + rgbToXyz[4] + rgbToXyz[5];
+  OpponentMatrixData result;
+  for (std::size_t i = 0; i < 9; ++i) {
+    result.rgbToXyz[i] = static_cast<float>(rgbToXyz[i]);
+    result.xyzToRgb[i] = static_cast<float>(xyzToRgb[i]);
+  }
+  result.whiteX = static_cast<float>((rgbToXyz[0] + rgbToXyz[1] + rgbToXyz[2]) / whiteY);
+  result.whiteZ = static_cast<float>((rgbToXyz[6] + rgbToXyz[7] + rgbToXyz[8]) / whiteY);
+  return result;
+}
+
 YabPixel MatrixOpponentTransform::toYab(const std::array<float, 3>& rgb) const noexcept {
   const double x = rgbToXyz_[0]*rgb[0] + rgbToXyz_[1]*rgb[1] + rgbToXyz_[2]*rgb[2];
   const double y = rgbToXyz_[3]*rgb[0] + rgbToXyz_[4]*rgb[1] + rgbToXyz_[5]*rgb[2];
@@ -67,4 +81,3 @@ std::array<float, 3> MatrixOpponentTransform::toRgb(const YabPixel& p) const noe
 }
 
 }  // namespace pigment
-

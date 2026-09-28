@@ -26,7 +26,16 @@ enum class DetailCollapseDebugView {
   DifferenceFromOriginal
 };
 
+enum class DetailCollapseBackend {
+  ReferenceBilateralCpu = 0,
+  GuidedCpu,
+  DomainTransformCpu,
+  GuidedMetal,
+  DomainTransformMetal
+};
+
 struct DetailCollapseResearchParams {
+  DetailCollapseBackend backend = DetailCollapseBackend::ReferenceBilateralCpu;
   float amount = 0.0f;
   float massScale = 4.0f;
   float structureScale = 5.0f;

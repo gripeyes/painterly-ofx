@@ -32,14 +32,15 @@ Read {
 }
 Reformat {
  type "to box"
- box_width 256
- box_height 256
+ box_width 1920
+ box_height 1080
  resize fit
  name Reformat1
  xpos 200
  ypos 80
 }
 OFXorg.painterlyofx.DetailCollapse_v1 {
+ backend "Guided Metal"
  amount 0.65
  massScale 2.5
  structureScale 5

@@ -3,8 +3,9 @@
 Mass Formation is an internal processing mode of `DetailCollapse`; it is not a
 separate OFX effect, plug-in factory, or public node. For visual research, the normal
 Pigment bundle temporarily exposes the backend through **DetailCollapse (Research)**.
-The current code is a CPU visual reference used to evaluate Rolling YAB Mass before
-an optimized backend or final DetailCollapse interface is selected.
+The direct bilateral code remains the CPU visual reference. Guided CPU, Domain
+Transform CPU, and Guided Metal are now selectable performance prototypes; no
+production backend has been selected.
 
 ## Architectural invariants
 
@@ -34,9 +35,16 @@ The Gaussian is only a scale seed. The visible consolidation is produced by the
 region-aware rolling operation. `Internal Variation` reinjects a lower-frequency
 version of the source rather than raw fine detail.
 
-The implementation is deliberately a reference, not the intended 4K production
-backend. Once its visual behaviour is accepted, guided filtering and the domain
-transform can be compared against its output.
+The reference source remains unchanged and is protected by a golden-output regression
+test. Guided CPU uses weighted local linear reconstruction, while Domain Transform CPU
+uses symmetric recursive horizontal/vertical passes with alternating axis order. Both
+retain four continuous rolling updates and independent strength/protection fields.
+
+Guided Metal independently implements the same weighted statistics and coefficient
+solve. RGB/YAB conversion, fields, rolling updates, reintegration, and output remain
+GPU-resident in one command buffer. CPU images use no-copy wrapping where valid and
+otherwise use shared staging with one synchronization. Native OFX buffers use the
+host queue asynchronously. Domain Transform Metal is deliberately reserved.
 
 The temporary node includes debug views for the seed, structure guide, independent
 processing and boundary fields, each rolling iteration, separated Y/AB mass results,
@@ -57,9 +65,9 @@ The unchanged follow-up order is:
    [mean shift](https://cs.brown.edu/people/pfelzens/engn1610/PAMIMeanshift.pdf).
 3. [Relative Total Variation](https://lxu.me/mypapers/texturesep12.pdf) first as a
    texture-likelihood or boundary-significance diagnostic.
-4. Compare a [guided filter](https://mlanthology.org/eccv/2010/he2010eccv-guided/)
-   or [domain-transform](https://doi.org/10.1145/2010324.1964964) production backend
-   against the accepted CPU reference.
+4. Select between the evaluated [guided filter](https://mlanthology.org/eccv/2010/he2010eccv-guided/)
+   and [domain-transform](https://doi.org/10.1145/2010324.1964964) prototypes only
+   after visual review against the bilateral reference.
 
 L0 gradient minimization is not a primary candidate because its edge steepening and
 gradient sparsification conflict with the requirement to avoid posterization and a
@@ -67,8 +75,10 @@ cartoon appearance. Perona–Malik diffusion remains a possible finishing regula
 not the definition of Mass Formation.
 
 The [SpektraFilm repository](https://github.com/chaert-s/spektrafilm-ofx) was reviewed
-only for general production OFX practices. Pigment contains no copied or derived GPL
-implementation.
+as a production engineering reference for Apple/OpenFX GPU negotiation, buffer and
+queue lifetime, staging, resource packaging, signing, fallback, and validation.
+Pigment's implementation and shaders are independently written; it contains no copied
+or derived GPL implementation.
 
 ## Evaluation
 
