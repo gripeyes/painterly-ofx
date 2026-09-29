@@ -20,6 +20,23 @@ option(PIGMENT_METAL_FAST_MATH "Allow Metal fast relaxed math" OFF)
 option(PIGMENT_METAL_PROFILE_SOURCES "Record Metal shader sources for profiling" OFF)
 set(OPENFX_ROOT "" CACHE PATH "Path to an OpenFX 1.5.1 source tree")
 
+# Phase 4 needs a robust sparse symmetric eigensolver for the closed-form
+# matting Laplacian.  Eigen and Spectra are header-only, permissively licensed,
+# and pinned so the CPU reference remains reproducible.
+FetchContent_Declare(eigen
+  GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+  GIT_TAG 3.4.0
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR pigment_dependency_only)
+FetchContent_Declare(spectra
+  GIT_REPOSITORY https://github.com/yixuan/spectra.git
+  GIT_TAG v1.1.0
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR pigment_dependency_only)
+FetchContent_MakeAvailable(eigen spectra)
+add_library(pigment_eigen INTERFACE)
+target_include_directories(pigment_eigen INTERFACE "${eigen_SOURCE_DIR}")
+
 add_library(pigment_core STATIC
   src/core/ColorSpace.cpp
   src/core/Similarity.cpp
@@ -34,9 +51,15 @@ add_library(pigment_core STATIC
   src/core/ScreenedMultigrid.cpp
   src/core/PhotographicDecomposition.cpp
   src/core/PigmentPhase33.cpp
+  src/core/Phase4Types.cpp
+  src/core/SpectralMattingBasis.cpp
+  src/core/LatentPlateGraph.cpp
+  src/core/PigmentPhase4.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)
+target_include_directories(pigment_core PRIVATE "${spectra_SOURCE_DIR}/include")
+target_link_libraries(pigment_core PUBLIC pigment_eigen)
 target_compile_features(pigment_core PUBLIC cxx_std_17)
 target_compile_options(pigment_core PRIVATE
   $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall;-Wextra;-Wpedantic>)
@@ -109,6 +132,13 @@ if(BUILD_TESTING)
   add_executable(pigment_phase33_core_tests tests/PigmentPhase33CoreTests.cpp)
   target_link_libraries(pigment_phase33_core_tests PRIVATE pigment_core)
   add_test(NAME pigment_phase33_core_tests COMMAND pigment_phase33_core_tests)
+
+  add_executable(pigment_phase4_tests tests/PigmentPhase4Tests.cpp)
+  target_link_libraries(pigment_phase4_tests PRIVATE pigment_core)
+  add_test(NAME pigment_phase4_tests COMMAND pigment_phase4_tests)
+
+  add_executable(pigment_phase4_gate tests/Phase4GateHarness.cpp)
+  target_link_libraries(pigment_phase4_gate PRIVATE pigment_core)
 
   add_executable(pigment_backend_benchmark tests/BackendBenchmark.cpp)
   target_link_libraries(pigment_backend_benchmark PRIVATE pigment_core)

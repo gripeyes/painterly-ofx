@@ -4,6 +4,7 @@
 #include "core/Execution.h"
 #include "core/PictorialPlanes.h"
 #include "core/PhotographicDecomposition.h"
+#include "core/Phase4Types.h"
 #include "core/SoftPictorialPlates.h"
 #include "core/Types.h"
 
@@ -17,7 +18,8 @@ enum class PigmentComparisonMode {
   WeightedMeanPigment,
   RepresentativeModePigment,
   PictorialPlanes,
-  SoftPictorialPlates
+  SoftPictorialPlates,
+  AutomaticPlateGraph
 };
 
 enum class PigmentDebugView {
@@ -88,7 +90,36 @@ enum class PigmentDebugView {
   Phase33PreVeil,
   Phase33PreSoftness,
   Phase33DifferenceFromOriginal,
-  TransitionSolverResidual
+  TransitionSolverResidual,
+  Phase4SourceBoundaryStrength,
+  Phase4BoundaryHierarchy,
+  Phase4AtomicRegions,
+  Phase4LatentComponent,
+  Phase4LatentComposite,
+  Phase4LatentReconstructionError,
+  Phase4SpectralResidual,
+  Phase4ComponentRecoveryError,
+  Phase4AppearanceUnmixingError,
+  Phase4PlateAlpha,
+  Phase4PlateYSupport,
+  Phase4PlateABSupport,
+  Phase4PlateYAppearance,
+  Phase4PlateABAppearance,
+  Phase4PlateOverlapComposite,
+  Phase4YRegionHierarchy,
+  Phase4ABRegionHierarchy,
+  Phase4RemovedBoundaries,
+  Phase4RetainedBoundaries,
+  Phase4YChunks,
+  Phase4ABChunks,
+  Phase4SourceGradientField,
+  Phase4SimplifiedGradientField,
+  Phase4GradientReconstruction,
+  Phase4PrimitiveFitError,
+  Phase4PreSpill,
+  Phase4SpillInfluence,
+  Phase4PostSpill,
+  Phase4DifferenceFromSource
 };
 
 enum class PictorialDebugPlane { PlaneA = 0, PlaneB, PlaneC, PlaneD, Composite };
@@ -146,6 +177,7 @@ struct IntegratedPigmentParams {
   PictorialDebugPlane debugPlane = PictorialDebugPlane::Composite;
   PictorialPlanesParams pictorial{};
   PigmentPhase33Params phase33{};
+  Phase4Params phase4{};
 };
 
 struct PigmentFieldValues {

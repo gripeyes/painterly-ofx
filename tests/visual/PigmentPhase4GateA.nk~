@@ -1,0 +1,249 @@
+#! /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/libnuke-17.0.1.dylib -nx
+version 17.0 v1
+Root {
+ inputs 0
+ gsv  {
+  __default__ {
+  } 
+}
+ name /Users/j7s/coding/painterly-ofx/tests/visual/PigmentPhase4GateA.nk
+ frame 0
+ format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
+ proxy_type scale
+ proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
+ colorManagement Nuke
+ workingSpaceLUT 0
+ monitorLut sRGB
+ monitorOutLUT rec709
+ int8Lut 0
+ int16Lut 0
+ logLut 0
+ floatLut 0
+}
+Read {
+ inputs 0
+ file_type png
+ file /Users/j7s/coding/painterly-ofx/tests/visual/inputs/skin-fabric.png
+ in_colorspace scene_linear
+ out_colorspace scene_linear
+ name Read1
+ xpos 100
+}
+Reformat {
+ type "to box"
+ box_width 512
+ box_height 512
+ resize fit
+ name Reformat1
+ xpos 100
+ ypos 100
+}
+OFXorg.painterlyofx.Pigment_v1 {
+ Painterly 1
+ amount 0.7
+ massScale 18
+ massStrength 0.55
+ toneSimilarity 0.25
+ chromaSimilarity 0.18
+ lumaAttraction 0.65
+ chromaAttraction 0.8
+ Structure 1
+ structureScale 10
+ structurePreserve 0.8
+ boundaryPreserve 0.75
+ boundaryExtinction 0.35
+ boundarySoftness 0.15
+ "Spatial Variation" 1
+ veilAmount 0.35
+ veilScale 500
+ veilIrregularity 0.4
+ veilContrast 0.3
+ veilSeed 1
+ Detail 1
+ detailCleanup 0.1
+ fineDetail 0.05
+ mediumDetail 0.15
+ internalVariation 0.3
+ Chroma 1
+ chromaMigration 0.35
+ chromaScale 24
+ chromaEdgeRespect 0.6
+ Output 1
+ mix 1
+ "Pictorial Planes" 0
+ "Plane A" 0
+ planeAEnable true
+ planeAAmount 1
+ planeASourceMix 1
+ planeAManualTarget 0.18
+ planeAYOffset 0
+ planeAToneInfluence 1
+ planeAChromaBiasA 0
+ planeAChromaBiasB 0
+ planeAChromaInfluence 1
+ "Plane B" 0
+ planeBEnable true
+ planeBAmount 1
+ planeBSourceMix 1
+ planeBManualTarget 0.18
+ planeBYOffset 0
+ planeBToneInfluence 1
+ planeBChromaBiasA 0
+ planeBChromaBiasB 0
+ planeBChromaInfluence 1
+ "Plane C" 0
+ planeCEnable true
+ planeCAmount 1
+ planeCSourceMix 1
+ planeCManualTarget 0.18
+ planeCYOffset 0
+ planeCToneInfluence 1
+ planeCChromaBiasA 0
+ planeCChromaBiasB 0
+ planeCChromaInfluence 1
+ "Plane D" 0
+ planeDEnable true
+ planeDAmount 1
+ planeDSourceMix 1
+ planeDManualTarget 0.18
+ planeDYOffset 0
+ planeDToneInfluence 1
+ planeDChromaBiasA 0
+ planeDChromaBiasB 0
+ planeDChromaInfluence 1
+ "Pictorial Information" 0
+ fineExtinction 0.9
+ mediumExtinction 0.8
+ broadRetention 0.2
+ detailStructurePreserve 0.7
+ "Plane Transitions" 0
+ yTransitionWidth 12
+ abTransitionWidth 48
+ transitionStructureRespect 0.7
+ localSoftness 0
+ "Soft Pictorial Plates (Phase 3.3)" 0
+ "Plane Construction" 0
+ phase33PlaneSource "Auto Convex Palette"
+ phase33AutomaticOccupancy 1
+ phase33AutomaticPlaneStrength 1
+ phase33SpatialCoherence 0.5
+ phase33ColorCoherence 0.5
+ phase33HybridGuidance 0.75
+ "Photographic Shading" 0
+ phase33ShadingModel "Source Smooth"
+ phase33SmoothSimplification 0.55
+ phase33ShadingStructurePreserve 0.8
+ phase33ChromaShadingRetention 0.65
+ phase33StructurePreserve 0.9
+ "Phase 3.3 Solver" 0
+ phase33TransitionSolver "Multigrid Reference"
+ phase33ComputeBackend Auto
+ "Automatic Plate Graph (Phase 4)" 0
+ "Auto Plates" 1
+ phase4PlateCount 6
+ phase4PlateScale 48
+ phase4PlateOverlap 0.55
+ phase4BoundaryLock 0.75
+ phase4LumaChromaCoupling 0.35
+ "Chunk Formation" 0
+ phase4LumaChunkScale 0
+ phase4ChromaChunkScale 0
+ phase4MergeSelectivity 0.6
+ phase4InternalVariation 0.45
+ phase4GradientComplexity 0.35
+ "Plate Interaction" 0
+ phase4SpillAmount 0
+ phase4SpillReach 48
+ phase4SpillAsymmetry 0.5
+ phase4ChromaSpill 0.75
+ phase4LumaSpill 0.15
+ phase4StructureRespect 0.8
+ "Plate A" 0
+ phase4PlateAEnable true
+ phase4PlateAWeight 1
+ phase4PlateATone 0
+ phase4PlateABiasA 0
+ phase4PlateABiasB 0
+ phase4PlateASpillOut 1
+ phase4PlateAReceive 1
+ "Plate B" 0
+ phase4PlateBEnable true
+ phase4PlateBWeight 1
+ phase4PlateBTone 0
+ phase4PlateBBiasA 0
+ phase4PlateBBiasB 0
+ phase4PlateBSpillOut 1
+ phase4PlateBReceive 1
+ "Plate C" 0
+ phase4PlateCEnable true
+ phase4PlateCWeight 1
+ phase4PlateCTone 0
+ phase4PlateCBiasA 0
+ phase4PlateCBiasB 0
+ phase4PlateCSpillOut 1
+ phase4PlateCReceive 1
+ "Plate D" 0
+ phase4PlateDEnable true
+ phase4PlateDWeight 1
+ phase4PlateDTone 0
+ phase4PlateDBiasA 0
+ phase4PlateDBiasB 0
+ phase4PlateDSpillOut 1
+ phase4PlateDReceive 1
+ "Plate E" 0
+ phase4PlateEEnable true
+ phase4PlateEWeight 1
+ phase4PlateETone 0
+ phase4PlateEBiasA 0
+ phase4PlateEBiasB 0
+ phase4PlateESpillOut 1
+ phase4PlateEReceive 1
+ "Plate F" 0
+ phase4PlateFEnable true
+ phase4PlateFWeight 1
+ phase4PlateFTone 0
+ phase4PlateFBiasA 0
+ phase4PlateFBiasB 0
+ phase4PlateFSpillOut 1
+ phase4PlateFReceive 1
+ "Plate G" 0
+ phase4PlateGEnable true
+ phase4PlateGWeight 1
+ phase4PlateGTone 0
+ phase4PlateGBiasA 0
+ phase4PlateGBiasB 0
+ phase4PlateGSpillOut 1
+ phase4PlateGReceive 1
+ "Plate H" 0
+ phase4PlateHEnable true
+ phase4PlateHWeight 1
+ phase4PlateHTone 0
+ phase4PlateHBiasA 0
+ phase4PlateHBiasB 0
+ phase4PlateHSpillOut 1
+ phase4PlateHReceive 1
+ "Phase 4 Research Advanced" 0
+ phase4LatentCount 16
+ phase4DebugLatent 16
+ phase4DebugPlate 5
+ "Research Advanced" 0
+ regionSoftness 0.5
+ modeSelectivity 0.65
+ boundaryScale 12
+ veilTonalBias 0
+ chromaLumaCoupling 0.6
+ workingGamut ACEScg
+ invertMask false
+ comparisonMode "Automatic Plate Graph (Phase 4)"
+ debugView "Phase 4 Latent Composite"
+ debugPlane Composite
+ name Pigment1
+ selected true
+ xpos 100
+ ypos 200
+}
+Viewer {
+ name Viewer1
+ xpos 100
+ ypos 300
+}
