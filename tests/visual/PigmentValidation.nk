@@ -39,7 +39,21 @@ Reformat {
  xpos 200
  ypos 80
 }
+set N732a0000 [stack 0]
+Expression {
+ expr0 "(x < 1017.6) * (y < 669.6)"
+ expr1 "(x >= 787.2) * (y < 734.4)"
+ expr2 "(x < 1267.2) * (y >= 518.4)"
+ expr3 "(x >= 1056) * (y >= 475.2)"
+ name Expression1
+ label "EDITABLE RGBA PLANE MAP\nR=A G=B B=C A=D"
+ xpos 500
+ ypos 80
+}
+push 0
+push $N732a0000
 OFXorg.painterlyofx.Pigment_v1 {
+ inputs 3
  Painterly 1
  amount 0.9
  massScale 30
@@ -55,7 +69,7 @@ OFXorg.painterlyofx.Pigment_v1 {
  boundaryExtinction 0.48
  boundarySoftness 0.15
  "Spatial Variation" 1
- veilAmount 0.35
+ veilAmount 0
  veilScale 500
  veilIrregularity 0.4
  veilContrast 0.3
@@ -71,6 +85,57 @@ OFXorg.painterlyofx.Pigment_v1 {
  chromaEdgeRespect 0.6
  Output 1
  mix 1
+ "Pictorial Planes" 0
+ "Plane A" 0
+ planeAEnable true
+ planeAAmount 1
+ planeASourceMix 1
+ planeAManualTarget 0.18
+ planeAYOffset 0
+ planeAToneInfluence 1
+ planeAChromaBiasA 0
+ planeAChromaBiasB 0
+ planeAChromaInfluence 1
+ "Plane B" 0
+ planeBEnable true
+ planeBAmount 1
+ planeBSourceMix 1
+ planeBManualTarget 0.18
+ planeBYOffset 0
+ planeBToneInfluence 1
+ planeBChromaBiasA 0
+ planeBChromaBiasB 0
+ planeBChromaInfluence 1
+ "Plane C" 0
+ planeCEnable true
+ planeCAmount 1
+ planeCSourceMix 1
+ planeCManualTarget 0.18
+ planeCYOffset 0
+ planeCToneInfluence 1
+ planeCChromaBiasA 0
+ planeCChromaBiasB 0
+ planeCChromaInfluence 1
+ "Plane D" 0
+ planeDEnable true
+ planeDAmount 1
+ planeDSourceMix 1
+ planeDManualTarget 0.18
+ planeDYOffset 0
+ planeDToneInfluence 1
+ planeDChromaBiasA 0
+ planeDChromaBiasB 0
+ planeDChromaInfluence 1
+ "Pictorial Information" 0
+ fineExtinction 0.9
+ mediumExtinction 0.8
+ broadRetention 0.2
+ detailStructurePreserve 0.7
+ "Plane Transitions" 0
+ yTransitionWidth 12
+ abTransitionWidth 48
+ transitionStructureRespect 0.7
+ localSoftness 0
  "Research Advanced" 0
  regionSoftness 0.5
  modeSelectivity 0.88
@@ -79,11 +144,12 @@ OFXorg.painterlyofx.Pigment_v1 {
  chromaLumaCoupling 0.6
  workingGamut ACEScg
  invertMask false
- comparisonMode "Representative Mode"
+ comparisonMode "Pictorial Planes (Phase 3.2)"
  debugView Final
+ debugPlane Composite
  name Pigment1
  selected true
- xpos 200
+ xpos 300
  ypos 180
 }
 Viewer {

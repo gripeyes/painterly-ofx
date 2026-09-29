@@ -2,6 +2,7 @@
 
 #include "core/ColorSpace.h"
 #include "core/Execution.h"
+#include "core/PictorialPlanes.h"
 #include "core/Types.h"
 
 #include <cstdint>
@@ -12,7 +13,8 @@ enum class PigmentComparisonMode {
   Original = 0,
   GuidedDetailCollapse,
   WeightedMeanPigment,
-  RepresentativeModePigment
+  RepresentativeModePigment,
+  PictorialPlanes
 };
 
 enum class PigmentDebugView {
@@ -42,8 +44,28 @@ enum class PigmentDebugView {
   RepresentativeDistance,
   CandidateCompetition,
   LegacyWeightedMean,
-  RepresentativeModeResult
+  RepresentativeModeResult,
+  RawPlaneMap,
+  NormalizedPlaneMembership,
+  BaseMembership,
+  YTransitionMembership,
+  ABTransitionMembership,
+  PlaneBroadYTarget,
+  PlaneBroadABTarget,
+  CombinedYTarget,
+  CombinedABTarget,
+  PlaneBroadComponent,
+  PlaneFineResidual,
+  PlaneMediumResidual,
+  PlaneExtinctionAmount,
+  PlaneStructureProtection,
+  PlanePreVeil,
+  PlanePreSoftness,
+  PlaneFitError,
+  PlaneDifferenceFromOriginal
 };
+
+enum class PictorialDebugPlane { PlaneA = 0, PlaneB, PlaneC, PlaneD, Composite };
 
 struct IntegratedPigmentParams {
   float amount = 0.7f;
@@ -86,6 +108,8 @@ struct IntegratedPigmentParams {
   float mix = 1.0f;
   PigmentComparisonMode comparison = PigmentComparisonMode::RepresentativeModePigment;
   PigmentDebugView debugView = PigmentDebugView::Final;
+  PictorialDebugPlane debugPlane = PictorialDebugPlane::Composite;
+  PictorialPlanesParams pictorial{};
 };
 
 struct PigmentFieldValues {

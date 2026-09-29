@@ -48,3 +48,17 @@ and adds `*-representative-mode.png`. Density, dominant-mode, confidence,
 representative-distance, and candidate-competition views expose why a population was
 selected. The validation scene defaults to Representative Mode and uses deliberately
 aggressive continuous settings for the grape/laundry acceptance comparison.
+
+## Pictorial Planes Phase 3.2
+
+`renders/pictorial-planes` contains the Phase 3.2 engineering pass: Original and
+legacy comparisons, raw and normalized Plane Map views, independent Y/AB transition
+memberships, plane and combined targets, residual bands, extinction/protection,
+Pre-Veil, Pre-Softness, Final, fit error, and signed difference. The saved Nuke scene
+connects an editable procedural RGBA ownership map to the new PlaneMap input and sets
+Veil and Local Softness to zero.
+
+The procedural map validates the processing graph and diagnostics; it is not the
+artistic acceptance map. Replace it with four aligned Roto/RotoPaint masks before
+judging the cheek, shoulder, and knee isolation gate. See
+`docs/Phase3_2PictorialPlanes.md` for implementation and current visual status.

@@ -272,6 +272,47 @@ int main(int argc, char** argv) {
       if (!instance.renderIntegrated(integrated)) return 12;
       if (output != source) return 13;
       std::cout << "integrated_metal_alpha_hdr_identity=pass\n";
+
+      std::vector<float> planeMap(source.size(), 0.0f);
+      for (std::size_t i = 0; i < planeMap.size(); i += 4) {
+        planeMap[i] = 0.5f; planeMap[i + 1] = 0.5f;
+      }
+      integrated.planeMap = {planeMap.data(), planeMap.size() * sizeof(float),
+          o.width * 4 * static_cast<int>(sizeof(float)), bounds, 4};
+      integrated.hasPlaneMap = true;
+      integrated.params = integratedParameters(o.massScale);
+      integrated.params.comparison = pigment::PigmentComparisonMode::PictorialPlanes;
+      integrated.params.veilAmount = 0.0f;
+      integrated.params.pictorial.localSoftness = 0.0f;
+      integrated.params.debugView = pigment::PigmentDebugView::BaseMembership;
+      if (!instance.renderIntegrated(integrated)) {
+        std::cerr << "Pictorial Plane Metal failure: " << instance.diagnostics().message << '\n';
+        return 14;
+      }
+      for (std::size_t i = 0; i < output.size(); i += 4)
+        if (std::abs(output[i]) > 1.0e-5f || std::abs(output[i + 1]) > 1.0e-5f ||
+            std::abs(output[i + 2]) > 1.0e-5f || output[i + 3] != source[i + 3]) return 15;
+      integrated.params.debugView = pigment::PigmentDebugView::Final;
+      if (!instance.renderIntegrated(integrated)) return 16;
+      changed = false;
+      for (std::size_t i = 0; i < output.size(); ++i) {
+        if (!std::isfinite(output[i])) return 17;
+        if ((i & 3U) == 3U) { if (output[i] != source[i]) return 18; }
+        else if (std::abs(output[i] - source[i]) > 1.0e-6f) changed = true;
+      }
+      if (!changed) return 19;
+      integrated.params.amount = 0.0f;
+      std::fill(output.begin(), output.end(), 0.0f);
+      if (!instance.renderIntegrated(integrated) || output != source) return 20;
+      integrated.params.amount = 0.7f;
+      integrated.params.mix = 0.0f;
+      std::fill(output.begin(), output.end(), 0.0f);
+      if (!instance.renderIntegrated(integrated) || output != source) return 21;
+      integrated.params.mix = 1.0f;
+      integrated.hasPlaneMap = false;
+      std::fill(output.begin(), output.end(), 0.0f);
+      if (!instance.renderIntegrated(integrated) || output != source) return 22;
+      std::cout << "pictorial_planes_metal_membership_alpha_identity=pass\n";
     }
     return 0;
   } catch (const std::exception& error) {

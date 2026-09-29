@@ -26,7 +26,11 @@ required = {
     "fineDetail", "mediumDetail", "internalVariation", "chromaMigration",
     "chromaScale", "chromaEdgeRespect", "regionSoftness", "boundaryScale",
     "modeSelectivity", "veilTonalBias", "chromaLumaCoupling", "workingGamut", "comparisonMode",
-    "debugView", "mix",
+    "debugView", "mix", "debugPlane", "fineExtinction", "mediumExtinction",
+    "broadRetention", "detailStructurePreserve", "yTransitionWidth",
+    "abTransitionWidth", "transitionStructureRespect", "localSoftness",
+    "planeAEnable", "planeAAmount", "planeASourceMix", "planeAManualTarget",
+    "planeAToneInfluence", "planeAChromaInfluence",
 }
 missing = required.difference(node.knobs())
 if missing:
@@ -53,11 +57,23 @@ def render_png(source, filename):
     return elapsed
 
 
+def make_plane_map(source, width, height):
+    """Create four editable, overlapping ownership regions in raw RGBA channels."""
+    plane_map = nuke.nodes.Expression(inputs=[source])
+    plane_map["label"].setValue("EDITABLE RGBA PLANE MAP\nR=A G=B B=C A=D")
+    plane_map["expr0"].setValue("(x < %g) * (y < %g)" % (width * 0.53, height * 0.62))
+    plane_map["expr1"].setValue("(x >= %g) * (y < %g)" % (width * 0.41, height * 0.68))
+    plane_map["expr2"].setValue("(x < %g) * (y >= %g)" % (width * 0.66, height * 0.48))
+    plane_map["expr3"].setValue("(x >= %g) * (y >= %g)" % (width * 0.55, height * 0.44))
+    return plane_map
+
+
 plates = {
     "fruit-grapes": "fruit-grapes.png",
     "laundry-cloth": "laundry-cloth.png",
     "low-light-chroma": "low-light-chroma.png",
     "cgi-specular": "cgi-specular.png",
+    "skin-fabric": "skin-fabric.png",
 }
 timings = []
 for knob, value in {
@@ -69,6 +85,21 @@ for knob, value in {
     "fineDetail": 0.02, "mediumDetail": 0.08, "internalVariation": 0.22,
 }.items():
     node[knob].setValue(value)
+for knob, value in {
+    "fineExtinction": 0.9,
+    "mediumExtinction": 0.8,
+    "broadRetention": 0.2,
+    "detailStructurePreserve": 0.7,
+    "yTransitionWidth": 12.0,
+    "abTransitionWidth": 48.0,
+    "transitionStructureRespect": 0.7,
+    "veilAmount": 0.0,
+    "localSoftness": 0.0,
+}.items():
+    node[knob].setValue(value)
+
+plane_input = node.maxInputs() - 1
+print("PIGMENT_INPUT_COUNT", node.maxInputs(), "PLANE_MAP_INPUT", plane_input)
 for label, filename in plates.items():
     read = nuke.nodes.Read(file=os.path.join(root, "tests", "visual", "inputs", filename))
     reformat = nuke.nodes.Reformat(inputs=[read])
@@ -76,9 +107,12 @@ for label, filename in plates.items():
     reformat["box_width"].setValue(512)
     reformat["box_height"].setValue(512)
     reformat["resize"].setValue("fit")
+    plane_map = make_plane_map(reformat, 512, 512)
     node.setInput(0, reformat)
+    node.setInput(plane_input, plane_map)
     for comparison, suffix in ((0, "original"), (1, "guided"),
-                               (2, "weighted-mean"), (3, "representative-mode")):
+                               (2, "weighted-mean"), (3, "representative-mode"),
+                               (4, "pictorial-planes")):
         node["comparisonMode"].setValue(comparison)
         node["debugView"].setValue(0)
         timings.append(render_png(node, label + "-" + suffix + ".png"))
@@ -96,10 +130,25 @@ for label, filename in plates.items():
         }.items():
             node["debugView"].setValue(value)
             timings.append(render_png(node, label + "-" + suffix + ".png"))
+    if label in ("skin-fabric", "low-light-chroma"):
+        node["comparisonMode"].setValue(4)
+        for value, suffix in {
+            27: "plane-map", 28: "plane-memberships", 29: "base-membership",
+            30: "y-transition", 31: "ab-transition", 32: "plane-y-target",
+            33: "plane-ab-target", 34: "combined-y-target",
+            35: "combined-ab-target", 36: "broad-component",
+            37: "fine-residual", 38: "medium-residual", 39: "extinction",
+            40: "structure-protection", 41: "pre-veil", 42: "pre-softness",
+            43: "fit-error", 44: "plane-difference",
+        }.items():
+            node["debugView"].setValue(value)
+            timings.append(render_png(node, label + "-" + suffix + ".png"))
+    node.setInput(plane_input, None)
+    nuke.delete(plane_map)
     nuke.delete(reformat)
     nuke.delete(read)
 
-node["comparisonMode"].setValue(3)
+node["comparisonMode"].setValue(4)
 node["debugView"].setValue(0)
 validation_read = nuke.nodes.Read(
     file=os.path.join(root, "tests", "visual", "inputs", "laundry-cloth.png")
@@ -109,11 +158,14 @@ validation_reformat["type"].setValue("to box")
 validation_reformat["box_width"].setValue(1920)
 validation_reformat["box_height"].setValue(1080)
 validation_reformat["resize"].setValue("fit")
+validation_plane_map = make_plane_map(validation_reformat, 1920, 1080)
 node.setInput(0, validation_reformat)
+node.setInput(plane_input, validation_plane_map)
 viewer = nuke.nodes.Viewer(inputs=[node])
 validation_read.setXYpos(200, -20)
 validation_reformat.setXYpos(200, 80)
-node.setXYpos(200, 180)
+validation_plane_map.setXYpos(500, 80)
+node.setXYpos(300, 180)
 viewer.setXYpos(200, 280)
 script_path = os.path.join(root, "tests", "visual", "PigmentValidation.nk")
 nuke.scriptSaveAs(script_path, overwrite=1)

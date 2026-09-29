@@ -319,6 +319,14 @@ struct IntegratedParams {
   float whiteX, whiteZ;
   float rgbToXyz[9];
   float xyzToRgb[9];
+  uint hasPlaneMap, debugPlane;
+  uint planeEnabled[4];
+  float planeAmount[4], planeSourceMix[4];
+  float planeManualY[4], planeManualA[4], planeManualB[4];
+  float planeYOffset[4], planeToneInfluence[4];
+  float planeABias[4], planeBBias[4], planeChromaInfluence[4];
+  float fineExtinction, mediumExtinction, broadRetention, detailStructurePreserve;
+  float yTransitionWidth, abTransitionWidth, transitionStructureRespect, localSoftness;
 };
 
 struct RegionLevelParams {
@@ -821,4 +829,455 @@ kernel void pigment_integrated_final(
   destinationBuffer[base] = rgb.x; destinationBuffer[base + 1] = rgb.y;
   destinationBuffer[base + 2] = rgb.z;
   if (destinationLayout.components == 4) destinationBuffer[base + 3] = alpha;
+}
+
+// Phase 3.2 manual pictorial planes -----------------------------------------
+
+struct PlaneLevelParams {
+  uint width, height;
+  float levelScale;
+  float lambdaX, lambdaY;
+};
+
+struct PlaneFitModel {
+  float centerX, centerY, scaleX, scaleY;
+  float coefficient[18];
+  float fitError;
+  uint order, valid, padding;
+};
+
+void rawPlaneMembership(const device float* planeMap,
+                        constant ImageLayout& layout,
+                        uint2 pixel, constant IntegratedParams& p,
+                        thread float4& planes, thread float& base) {
+  if (p.hasPlaneMap == 0) { planes = float4(0.0f); base = 1.0f; return; }
+  float4 raw = float4(readComponent(planeMap, layout, pixel, 0),
+                      readComponent(planeMap, layout, pixel, 1),
+                      readComponent(planeMap, layout, pixel, 2),
+                      readComponent(planeMap, layout, pixel, 3));
+  raw = clamp(raw, 0.0f, 1.0f);
+  planes = float4(p.planeEnabled[0] ? raw.x * clamp01(p.planeAmount[0]) : 0.0f,
+                  p.planeEnabled[1] ? raw.y * clamp01(p.planeAmount[1]) : 0.0f,
+                  p.planeEnabled[2] ? raw.z * clamp01(p.planeAmount[2]) : 0.0f,
+                  p.planeEnabled[3] ? raw.w * clamp01(p.planeAmount[3]) : 0.0f);
+  float sum = planes.x + planes.y + planes.z + planes.w;
+  float occupancy = clamp01(sum);
+  planes *= occupancy / max(sum, 1.0e-8f);
+  base = 1.0f - occupancy;
+}
+
+kernel void pigment_plane_membership_init(
+    const device float* planeMap [[buffer(0)]],
+    constant ImageLayout& layout [[buffer(1)]],
+    constant IntegratedParams& p [[buffer(2)]],
+    constant PlaneLevelParams& level [[buffer(3)]],
+    texture2d<float, access::write> planesOut [[texture(0)]],
+    texture2d<float, access::write> baseOut [[texture(1)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= level.width || gid.y >= level.height) return;
+  uint2 sourcePixel = min(uint2((float2(gid) + 0.5f) / level.levelScale),
+                          uint2(p.width - 1, p.height - 1));
+  float4 planes; float base;
+  rawPlaneMembership(planeMap, layout, sourcePixel, p, planes, base);
+  planesOut.write(planes, gid); baseOut.write(float4(base), gid);
+}
+
+kernel void pigment_plane_structure(
+    texture2d<float, access::read> blurNear [[texture(0)]],
+    texture2d<float, access::read> blurFar [[texture(1)]],
+    constant IntegratedParams& p [[buffer(0)]],
+    texture2d<float, access::write> protection [[texture(2)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= p.width || gid.y >= p.height) return;
+  uint2 l = uint2(gid.x > 0 ? gid.x - 1 : 0, gid.y);
+  uint2 r = uint2(min(gid.x + 1, p.width - 1), gid.y);
+  uint2 d = uint2(gid.x, gid.y > 0 ? gid.y - 1 : 0);
+  uint2 u = uint2(gid.x, min(gid.y + 1, p.height - 1));
+  float3 nx = 0.5f * (blurNear.read(r).xyz - blurNear.read(l).xyz);
+  float3 ny = 0.5f * (blurNear.read(u).xyz - blurNear.read(d).xyz);
+  float3 fx = 0.5f * (blurFar.read(r).xyz - blurFar.read(l).xyz);
+  float3 fy = 0.5f * (blurFar.read(u).xyz - blurFar.read(d).xyz);
+  float local = max(0.04f, abs(blurFar.read(gid).x) * 0.2f);
+  float nearMag = length(float2(nx.x, ny.x)) / local + 0.25f *
+      sqrt(dot(nx.yz, nx.yz) + dot(ny.yz, ny.yz));
+  float farMag = length(float2(fx.x, fy.x)) / local + 0.25f *
+      sqrt(dot(fx.yz, fx.yz) + dot(fy.yz, fy.yz));
+  float alignment = abs(dot(float2(nx.x, ny.x), float2(fx.x, fy.x))) /
+      max(1.0e-6f, length(float2(nx.x, ny.x)) * length(float2(fx.x, fy.x)));
+  float persistent = min(nearMag, farMag * 1.75f) * mix(0.5f, 1.0f, alignment);
+  protection.write(float4(smoother(0.0f, max(1.0e-5f, p.boundarySoftness), persistent)), gid);
+}
+
+kernel void pigment_plane_transition_relax(
+    texture2d<float, access::read> anchorPlanes [[texture(0)]],
+    texture2d<float, access::read> anchorBase [[texture(1)]],
+    texture2d<float, access::read> previousPlanes [[texture(2)]],
+    texture2d<float, access::read> previousBase [[texture(3)]],
+    texture2d<float, access::sample> protection [[texture(4)]],
+    constant IntegratedParams& p [[buffer(0)]],
+    constant PlaneLevelParams& level [[buffer(1)]],
+    texture2d<float, access::write> nextPlanes [[texture(5)]],
+    texture2d<float, access::write> nextBase [[texture(6)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= level.width || gid.y >= level.height) return;
+  uint2 l = uint2(gid.x > 0 ? gid.x - 1 : 0, gid.y);
+  uint2 r = uint2(min(gid.x + 1, level.width - 1), gid.y);
+  uint2 d = uint2(gid.x, gid.y > 0 ? gid.y - 1 : 0);
+  uint2 u = uint2(gid.x, min(gid.y + 1, level.height - 1));
+  float2 fullPosition = (float2(gid) + 0.5f) / level.levelScale;
+  float g = max(1.0e-4f, 1.0f - clamp01(p.transitionStructureRespect) *
+      clamp01(protection.sample(integratedLinear, fullPosition).x));
+  float denom = 1.0f + 2.0f * g * (level.lambdaX + level.lambdaY);
+  float4 value = (anchorPlanes.read(gid) + g * level.lambdaX *
+      (previousPlanes.read(l) + previousPlanes.read(r)) + g * level.lambdaY *
+      (previousPlanes.read(d) + previousPlanes.read(u))) / denom;
+  float base = (anchorBase.read(gid).x + g * level.lambdaX *
+      (previousBase.read(l).x + previousBase.read(r).x) + g * level.lambdaY *
+      (previousBase.read(d).x + previousBase.read(u).x)) / denom;
+  float total = max(1.0e-8f, base + value.x + value.y + value.z + value.w);
+  nextPlanes.write(max(value, 0.0f) / total, gid);
+  nextBase.write(float4(max(base, 0.0f) / total), gid);
+}
+
+float2 planePhysicalPosition(uint2 pixel, constant IntegratedParams& p) {
+  return float2((p.originX + float(pixel.x) / max(p.renderScaleX, 1.0e-6f)) * p.pixelAspect,
+                p.originY + float(pixel.y) / max(p.renderScaleY, 1.0e-6f));
+}
+
+void planeBasis(float2 position, thread PlaneFitModel& model, thread float values[6]) {
+  float u = (position.x - model.centerX) / max(model.scaleX, 1.0e-6f);
+  float v = (position.y - model.centerY) / max(model.scaleY, 1.0e-6f);
+  values[0] = 1.0f; values[1] = u; values[2] = v;
+  values[3] = u * u; values[4] = u * v; values[5] = v * v;
+}
+
+bool planeSolve6(thread float inputMatrix[36], thread float inputRhs[6],
+                 thread float output[6], uint dimensions) {
+  float matrix[36]; float rhs[6];
+  for (uint i = 0; i < 36; ++i) matrix[i] = inputMatrix[i];
+  for (uint i = 0; i < 6; ++i) { rhs[i] = inputRhs[i]; output[i] = 0.0f; }
+  for (uint column = 0; column < dimensions; ++column) {
+    uint pivot = column;
+    for (uint row = column + 1; row < dimensions; ++row)
+      if (abs(matrix[row * 6 + column]) > abs(matrix[pivot * 6 + column])) pivot = row;
+    if (abs(matrix[pivot * 6 + column]) < 1.0e-10f) return false;
+    for (uint c = 0; c < 6; ++c) {
+      float temp = matrix[column * 6 + c]; matrix[column * 6 + c] = matrix[pivot * 6 + c];
+      matrix[pivot * 6 + c] = temp;
+    }
+    float tempRhs = rhs[column]; rhs[column] = rhs[pivot]; rhs[pivot] = tempRhs;
+    float inverse = 1.0f / matrix[column * 6 + column];
+    for (uint c = column; c < dimensions; ++c) matrix[column * 6 + c] *= inverse;
+    rhs[column] *= inverse;
+    for (uint row = 0; row < dimensions; ++row) if (row != column) {
+      float factor = matrix[row * 6 + column];
+      for (uint c = column; c < dimensions; ++c)
+        matrix[row * 6 + c] -= factor * matrix[column * 6 + c];
+      rhs[row] -= factor * rhs[column];
+    }
+  }
+  for (uint i = 0; i < dimensions; ++i) output[i] = rhs[i];
+  return true;
+}
+
+float3 planeEvaluate(thread PlaneFitModel& model, float2 position) {
+  float f[6]; planeBasis(position, model, f); float3 result = float3(0.0f);
+  for (uint channel = 0; channel < 3; ++channel)
+    for (uint i = 0; i < 6; ++i) result[channel] += model.coefficient[channel * 6 + i] * f[i];
+  return result;
+}
+
+kernel void pigment_plane_fit_solve(
+    texture2d<float, access::read> original [[texture(0)]],
+    const device float* planeMap [[buffer(0)]],
+    constant ImageLayout& planeLayout [[buffer(1)]],
+    constant IntegratedParams& p [[buffer(2)]],
+    device PlaneFitModel* models [[buffer(3)]],
+    uint planeIndex [[thread_position_in_grid]]) {
+  if (planeIndex >= 4) return;
+  PlaneFitModel model{};
+  // A low-order global model does not benefit from visiting every source pixel.
+  // A deterministic 4x4 stratified lattice removes serial fit cost while still
+  // fitting the original (never preblurred) YAB samples.
+  constexpr uint fitStride = 4u;
+  float sumW = 0.0f; float2 sumPosition = float2(0.0f);
+  for (uint y = planeIndex & 1u; y < p.height; y += fitStride)
+    for (uint x = (planeIndex >> 1u) & 1u; x < p.width; x += fitStride) {
+    float4 membership; float base;
+    rawPlaneMembership(planeMap, planeLayout, uint2(x, y), p, membership, base);
+    float w = membership[planeIndex] * clamp(abs(original.read(uint2(x, y)).w), 0.0f, 1.0f);
+    sumW += w; sumPosition += w * planePhysicalPosition(uint2(x, y), p);
+  }
+  if (sumW < 1.0e-5f) { models[planeIndex] = model; return; }
+  float2 center = sumPosition / sumW; float2 variance = float2(0.0f);
+  for (uint y = planeIndex & 1u; y < p.height; y += fitStride)
+    for (uint x = (planeIndex >> 1u) & 1u; x < p.width; x += fitStride) {
+    float4 membership; float base;
+    rawPlaneMembership(planeMap, planeLayout, uint2(x, y), p, membership, base);
+    float w = membership[planeIndex] * clamp(abs(original.read(uint2(x, y)).w), 0.0f, 1.0f);
+    float2 delta = planePhysicalPosition(uint2(x, y), p) - center;
+    variance += w * delta * delta;
+  }
+  model.centerX = center.x; model.centerY = center.y;
+  model.scaleX = max(1.0f, sqrt(variance.x / sumW));
+  model.scaleY = max(1.0f, sqrt(variance.y / sumW));
+  uint dimensions = sumW >= 32.0f ? 6u : sumW >= 8.0f ? 3u : 1u;
+  float normal[36]; float rhs[18];
+  for (uint i = 0; i < 36; ++i) normal[i] = 0.0f;
+  for (uint i = 0; i < 18; ++i) rhs[i] = 0.0f;
+  for (uint y = planeIndex & 1u; y < p.height; y += fitStride)
+    for (uint x = (planeIndex >> 1u) & 1u; x < p.width; x += fitStride) {
+    float4 membership; float base;
+    rawPlaneMembership(planeMap, planeLayout, uint2(x, y), p, membership, base);
+    float4 sample = original.read(uint2(x, y));
+    float w = membership[planeIndex] * clamp(abs(sample.w), 0.0f, 1.0f);
+    float f[6]; planeBasis(planePhysicalPosition(uint2(x, y), p), model, f);
+    for (uint r = 0; r < dimensions; ++r) {
+      for (uint c = 0; c < dimensions; ++c) normal[r * 6 + c] += w * f[r] * f[c];
+      rhs[r] += w * f[r] * sample.x;
+      rhs[6 + r] += w * f[r] * sample.y;
+      rhs[12 + r] += w * f[r] * sample.z;
+    }
+  }
+  float trace = max(normal[0], 1.0e-8f);
+  for (uint i = 1; i < dimensions; ++i) normal[i * 6 + i] += trace * (i < 3 ? 1.0e-7f : 1.0e-4f);
+  bool solved = false;
+  uint trialDimensions = dimensions;
+  while (!solved) {
+    solved = true;
+    for (uint channel = 0; channel < 3; ++channel) {
+      float channelRhs[6]; float output[6];
+      for (uint i = 0; i < 6; ++i) channelRhs[i] = rhs[channel * 6 + i];
+      solved = planeSolve6(normal, channelRhs, output, trialDimensions) && solved;
+      for (uint i = 0; i < 6; ++i) model.coefficient[channel * 6 + i] = output[i];
+    }
+    if (solved) { dimensions = trialDimensions; break; }
+    if (trialDimensions == 1u) break;
+    trialDimensions = trialDimensions == 6u ? 3u : 1u;
+  }
+  if (!solved) { models[planeIndex] = PlaneFitModel{}; return; }
+  float residual = 0.0f;
+  for (uint y = planeIndex & 1u; y < p.height; y += fitStride)
+    for (uint x = (planeIndex >> 1u) & 1u; x < p.width; x += fitStride) {
+    float4 membership; float base;
+    rawPlaneMembership(planeMap, planeLayout, uint2(x, y), p, membership, base);
+    float4 sample = original.read(uint2(x, y));
+    float w = membership[planeIndex] * clamp(abs(sample.w), 0.0f, 1.0f);
+    float3 delta = sample.xyz - planeEvaluate(model, planePhysicalPosition(uint2(x, y), p));
+    residual += w * dot(delta, delta);
+  }
+  float residualScale2 = max(1.0e-10f, residual / sumW);
+  for (uint i = 0; i < 36; ++i) normal[i] = 0.0f;
+  for (uint i = 0; i < 18; ++i) rhs[i] = 0.0f;
+  for (uint y = planeIndex & 1u; y < p.height; y += fitStride)
+    for (uint x = (planeIndex >> 1u) & 1u; x < p.width; x += fitStride) {
+    float4 membership; float base;
+    rawPlaneMembership(planeMap, planeLayout, uint2(x, y), p, membership, base);
+    float4 sample = original.read(uint2(x, y));
+    float3 delta = sample.xyz - planeEvaluate(model, planePhysicalPosition(uint2(x, y), p));
+    float robust = 1.0f / (1.0f + dot(delta, delta) / residualScale2);
+    float w = membership[planeIndex] * clamp(abs(sample.w), 0.0f, 1.0f) * robust;
+    float f[6]; planeBasis(planePhysicalPosition(uint2(x, y), p), model, f);
+    for (uint r = 0; r < dimensions; ++r) {
+      for (uint c = 0; c < dimensions; ++c) normal[r * 6 + c] += w * f[r] * f[c];
+      rhs[r] += w * f[r] * sample.x;
+      rhs[6 + r] += w * f[r] * sample.y;
+      rhs[12 + r] += w * f[r] * sample.z;
+    }
+  }
+  trace = max(normal[0], 1.0e-8f);
+  for (uint i = 1; i < dimensions; ++i) normal[i * 6 + i] += trace * (i < 3 ? 1.0e-7f : 1.0e-4f);
+  for (uint channel = 0; channel < 3; ++channel) {
+    float channelRhs[6]; float output[6];
+    for (uint i = 0; i < 6; ++i) channelRhs[i] = rhs[channel * 6 + i];
+    if (planeSolve6(normal, channelRhs, output, dimensions))
+      for (uint i = 0; i < 6; ++i) model.coefficient[channel * 6 + i] = output[i];
+  }
+  model.fitError = sqrt(residualScale2);
+  model.order = dimensions == 6 ? 2 : dimensions == 3 ? 1 : 0;
+  model.valid = 1; models[planeIndex] = model;
+}
+
+kernel void pigment_plane_evaluate_combine(
+    texture2d<float, access::read> original [[texture(0)]],
+    texture2d<float, access::read> fineBlur [[texture(1)]],
+    texture2d<float, access::read> broad [[texture(2)]],
+    texture2d<float, access::sample> yPlanes [[texture(3)]],
+    texture2d<float, access::sample> yBase [[texture(4)]],
+    texture2d<float, access::sample> abPlanes [[texture(5)]],
+    texture2d<float, access::sample> abBase [[texture(6)]],
+    texture2d<float, access::read> protection [[texture(7)]],
+    const device float* mask [[buffer(0)]],
+    constant ImageLayout& maskLayout [[buffer(1)]],
+    constant IntegratedParams& p [[buffer(2)]],
+    const device PlaneFitModel* models [[buffer(3)]],
+    texture2d<float, access::write> combinedTarget [[texture(8)]],
+    texture2d<float, access::write> result [[texture(9)]],
+    texture2d<float, access::write> extinctionOut [[texture(10)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= p.width || gid.y >= p.height) return;
+  float2 q = (float2(gid) + 0.5f) * 0.25f;
+  float4 wy = yPlanes.sample(integratedLinear, q);
+  float4 wab = abPlanes.sample(integratedLinear, q);
+  float y0 = yBase.sample(integratedLinear, q).x;
+  float ab0 = abBase.sample(integratedLinear, q).x;
+  float4 source = original.read(gid); float4 broadValue = broad.read(gid);
+  float targetY = y0 * broadValue.x; float2 targetAB = ab0 * broadValue.yz;
+  float2 position = planePhysicalPosition(gid, p);
+  for (uint i = 0; i < 4; ++i) {
+    PlaneFitModel model = models[i];
+    float3 fitted = model.valid ? planeEvaluate(model, position) : broadValue.xyz;
+    float3 manual = float3(p.planeManualY[i], p.planeManualA[i], p.planeManualB[i]);
+    float3 target = mix(manual, fitted, clamp01(p.planeSourceMix[i]));
+    target.x += p.planeYOffset[i]; target.y += p.planeABias[i]; target.z += p.planeBBias[i];
+    targetY += wy[i] * mix(broadValue.x, target.x, clamp01(p.planeToneInfluence[i]));
+    targetAB += wab[i] * mix(broadValue.yz, target.yz, clamp01(p.planeChromaInfluence[i]));
+  }
+  float protect = clamp01(protection.read(gid).x);
+  float yRetain = clamp01(p.broadRetention + (1.0f - p.broadRetention) *
+      protect * clamp01(p.detailStructurePreserve));
+  float3 planeBroad = float3(mix(targetY, broadValue.x, yRetain),
+                             mix(targetAB, broadValue.yz, clamp01(p.broadRetention)));
+  float maskValue = 1.0f;
+  if (p.hasMask != 0) {
+    maskValue = clamp01(readComponent(mask, maskLayout, gid, 0));
+    if (p.invertMask != 0) maskValue = 1.0f - maskValue;
+  }
+  float gate = clamp01(p.amount) * maskValue;
+  float4 fineValue = fineBlur.read(gid);
+  float3 fine = source.xyz - fineValue.xyz;
+  float3 medium = fineValue.xyz - broadValue.xyz;
+  float occY = 1.0f - y0, occAB = 1.0f - ab0;
+  float structureKeep = protect * clamp01(p.detailStructurePreserve);
+  float fineY = 1.0f - gate * occY * clamp01(p.fineExtinction) * (1.0f - structureKeep);
+  float fineAB = 1.0f - gate * occAB * clamp01(p.fineExtinction) * (1.0f - structureKeep);
+  float mediumY = 1.0f - gate * occY * clamp01(p.mediumExtinction) * (1.0f - structureKeep);
+  float mediumAB = 1.0f - gate * occAB * clamp01(p.mediumExtinction) * (1.0f - structureKeep);
+  float3 base = mix(broadValue.xyz, planeBroad, gate);
+  float3 reconstructed = base + float3(fineY * fine.x + mediumY * medium.x,
+      fineAB * fine.y + mediumAB * medium.y, fineAB * fine.z + mediumAB * medium.z);
+  combinedTarget.write(float4(planeBroad, source.w), gid);
+  result.write(float4(reconstructed, source.w), gid);
+  extinctionOut.write(float4(0.5f * (gate * occY * (p.fineExtinction + p.mediumExtinction))), gid);
+}
+
+kernel void pigment_plane_apply_veil(
+    texture2d<float, access::read> original [[texture(0)]],
+    texture2d<float, access::read> preVeil [[texture(1)]],
+    constant IntegratedParams& p [[buffer(0)]],
+    texture2d<float, access::write> preSoftness [[texture(2)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= p.width || gid.y >= p.height) return;
+  float2 canonical = float2(p.originX + float(gid.x) / max(p.renderScaleX, 1.0e-6f),
+                            p.originY + float(gid.y) / max(p.renderScaleY, 1.0e-6f));
+  float scale = max(8.0f, p.veilScale); float irregularity = clamp01(p.veilIrregularity);
+  float warp = integratedNoise(canonical / (scale * 1.7f), p.veilSeed + 97u) * irregularity * 0.35f;
+  float2 q = canonical / scale + float2(warp, -0.7f * warp);
+  float n = integratedNoise(q, p.veilSeed) + irregularity * 0.48f *
+      integratedNoise(q * 2.03f, p.veilSeed + 17u);
+  n /= 1.0f + irregularity * 0.48f;
+  float v = 0.5f + 0.5f * tanh(n * exp2(clamp(p.veilContrast, -2.0f, 2.0f)));
+  float modulation = 1.0f + clamp01(p.veilAmount) * 0.7f * (v - 0.5f);
+  float4 o = original.read(gid), effect = preVeil.read(gid);
+  preSoftness.write(float4(o.xyz + modulation * (effect.xyz - o.xyz), o.w), gid);
+}
+
+kernel void pigment_plane_local_softness_blend(
+    texture2d<float, access::read> sharp [[texture(0)]],
+    texture2d<float, access::read> soft [[texture(1)]],
+    const device float* mask [[buffer(0)]],
+    constant ImageLayout& maskLayout [[buffer(1)]],
+    constant IntegratedParams& p [[buffer(2)]],
+    texture2d<float, access::write> output [[texture(2)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= p.width || gid.y >= p.height) return;
+  float gate = 1.0f;
+  if (p.hasMask != 0) {
+    gate = clamp01(readComponent(mask, maskLayout, gid, 0));
+    if (p.invertMask != 0) gate = 1.0f - gate;
+  }
+  float4 value = mix(sharp.read(gid), soft.read(gid), clamp01(p.localSoftness) * gate);
+  value.w = sharp.read(gid).w; output.write(value, gid);
+}
+
+kernel void pigment_plane_final(
+    const device float* sourceBuffer [[buffer(0)]],
+    device float* destinationBuffer [[buffer(1)]],
+    constant ImageLayout& sourceLayout [[buffer(2)]],
+    constant ImageLayout& destinationLayout [[buffer(3)]],
+    const device float* planeMap [[buffer(4)]],
+    constant ImageLayout& planeLayout [[buffer(5)]],
+    constant IntegratedParams& p [[buffer(6)]],
+    const device PlaneFitModel* models [[buffer(7)]],
+    texture2d<float, access::read> original [[texture(0)]],
+    texture2d<float, access::read> fineBlur [[texture(1)]],
+    texture2d<float, access::read> broad [[texture(2)]],
+    texture2d<float, access::sample> yPlanes [[texture(3)]],
+    texture2d<float, access::sample> yBase [[texture(4)]],
+    texture2d<float, access::sample> abPlanes [[texture(5)]],
+    texture2d<float, access::sample> abBase [[texture(6)]],
+    texture2d<float, access::read> combinedTarget [[texture(7)]],
+    texture2d<float, access::read> protection [[texture(8)]],
+    texture2d<float, access::read> extinction [[texture(9)]],
+    texture2d<float, access::read> preVeil [[texture(10)]],
+    texture2d<float, access::read> preSoftness [[texture(11)]],
+    texture2d<float, access::read> finalYab [[texture(12)]],
+    uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= p.width || gid.y >= p.height) return;
+  float4 o = original.read(gid); float4 result = finalYab.read(gid);
+  uint view = p.debugView; float3 rgb;
+  if (view == 0 && (p.amount <= 0.0f || p.mix <= 0.0f || p.hasPlaneMap == 0)) {
+    uint outputBase = destinationLayout.startFloat + gid.y * destinationLayout.rowFloats +
+                      gid.x * destinationLayout.components;
+    destinationBuffer[outputBase] = readComponent(sourceBuffer, sourceLayout, gid, 0);
+    destinationBuffer[outputBase + 1] = readComponent(sourceBuffer, sourceLayout, gid, 1);
+    destinationBuffer[outputBase + 2] = readComponent(sourceBuffer, sourceLayout, gid, 2);
+    if (destinationLayout.components == 4) {
+      destinationBuffer[outputBase + 3] = readComponent(sourceBuffer, sourceLayout, gid, 3);
+    }
+    return;
+  }
+  float2 q = (float2(gid) + 0.5f) * 0.25f;
+  float4 rawPlanes; float rawBase;
+  rawPlaneMembership(planeMap, planeLayout, gid, p, rawPlanes, rawBase);
+  uint selected = min(p.debugPlane, 3u);
+  if (view == 27 || view == 28) {
+    float4 rawMap = p.hasPlaneMap != 0 ? clamp(float4(readComponent(planeMap, planeLayout, gid, 0),
+        readComponent(planeMap, planeLayout, gid, 1), readComponent(planeMap, planeLayout, gid, 2),
+        readComponent(planeMap, planeLayout, gid, 3)), 0.0f, 1.0f) : float4(0.0f);
+    float4 values = view == 27 ? rawMap : rawPlanes;
+    rgb = p.debugPlane == 4 ? clamp(values.xyz + values.w, 0.0f, 1.0f) : float3(values[selected]);
+  } else if (view == 29) rgb = float3(rawBase);
+  else if (view == 30 || view == 31) {
+    float4 values = view == 30 ? yPlanes.sample(integratedLinear, q) :
+                                abPlanes.sample(integratedLinear, q);
+    rgb = p.debugPlane == 4 ? clamp(values.xyz + values.w, 0.0f, 1.0f) : float3(values[selected]);
+  } else if (view == 32 || view == 33) {
+    PlaneFitModel model = models[selected];
+    float3 target = model.valid ? planeEvaluate(model, planePhysicalPosition(gid, p)) : o.xyz;
+    if (view == 32) target = float3(target.x, o.yz); else target = float3(o.x, target.yz);
+    rgb = integratedYabToRgb(target, p);
+  } else if (view == 34) rgb = integratedYabToRgb(float3(combinedTarget.read(gid).x, o.yz), p);
+  else if (view == 35) rgb = integratedYabToRgb(float3(o.x, combinedTarget.read(gid).yz), p);
+  else if (view == 36) rgb = integratedYabToRgb(broad.read(gid).xyz, p);
+  else if (view == 37) rgb = clamp(float3(0.5f) + 0.45f * integratedYabToRgb(o.xyz - fineBlur.read(gid).xyz, p), 0.0f, 1.0f);
+  else if (view == 38) rgb = clamp(float3(0.5f) + 0.45f * integratedYabToRgb(fineBlur.read(gid).xyz - broad.read(gid).xyz, p), 0.0f, 1.0f);
+  else if (view == 39) rgb = float3(clamp01(extinction.read(gid).x));
+  else if (view == 40) rgb = float3(clamp01(protection.read(gid).x));
+  else if (view == 41) rgb = integratedYabToRgb(preVeil.read(gid).xyz, p);
+  else if (view == 42) rgb = integratedYabToRgb(preSoftness.read(gid).xyz, p);
+  else if (view == 43) rgb = float3(clamp01(models[selected].fitError));
+  else if (view == 44) rgb = clamp(float3(0.5f) + 0.45f * integratedYabToRgb(result.xyz - o.xyz, p), 0.0f, 1.0f);
+  else rgb = mix(integratedYabToRgb(o.xyz, p), integratedYabToRgb(result.xyz, p), clamp01(p.mix));
+  float alpha = o.w;
+  if (view == 0 && p.premultiplied != 0 && abs(alpha) <= 1.0e-6f) {
+    rgb = float3(readComponent(sourceBuffer, sourceLayout, gid, 0),
+                 readComponent(sourceBuffer, sourceLayout, gid, 1),
+                 readComponent(sourceBuffer, sourceLayout, gid, 2));
+  } else if (p.premultiplied != 0) rgb *= alpha;
+  uint outputBase = destinationLayout.startFloat + gid.y * destinationLayout.rowFloats +
+                    gid.x * destinationLayout.components;
+  destinationBuffer[outputBase] = rgb.x; destinationBuffer[outputBase + 1] = rgb.y;
+  destinationBuffer[outputBase + 2] = rgb.z;
+  if (destinationLayout.components == 4) destinationBuffer[outputBase + 3] = alpha;
 }

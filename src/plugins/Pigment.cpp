@@ -9,6 +9,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <sstream>
 
@@ -16,6 +17,7 @@ namespace pigment::plugin {
 namespace {
 
 constexpr const char* kMaskClip = "Mask";
+constexpr const char* kPlaneMapClip = "PlaneMap";
 constexpr const char* kAmount = "amount";
 constexpr const char* kMassScale = "massScale";
 constexpr const char* kMassStrength = "massStrength";
@@ -50,13 +52,43 @@ constexpr const char* kInvertMask = "invertMask";
 constexpr const char* kComparison = "comparisonMode";
 constexpr const char* kDebug = "debugView";
 constexpr const char* kMix = "mix";
+constexpr const char* kFineExtinction = "fineExtinction";
+constexpr const char* kMediumExtinction = "mediumExtinction";
+constexpr const char* kBroadRetention = "broadRetention";
+constexpr const char* kDetailStructurePreserve = "detailStructurePreserve";
+constexpr const char* kYTransitionWidth = "yTransitionWidth";
+constexpr const char* kABTransitionWidth = "abTransitionWidth";
+constexpr const char* kTransitionStructureRespect = "transitionStructureRespect";
+constexpr const char* kLocalSoftness = "localSoftness";
+constexpr const char* kDebugPlane = "debugPlane";
+constexpr std::array<const char*, 4> kPlaneEnable{
+    "planeAEnable", "planeBEnable", "planeCEnable", "planeDEnable"};
+constexpr std::array<const char*, 4> kPlaneAmount{
+    "planeAAmount", "planeBAmount", "planeCAmount", "planeDAmount"};
+constexpr std::array<const char*, 4> kPlaneSourceMix{
+    "planeASourceMix", "planeBSourceMix", "planeCSourceMix", "planeDSourceMix"};
+constexpr std::array<const char*, 4> kPlaneManualTarget{
+    "planeAManualTarget", "planeBManualTarget", "planeCManualTarget", "planeDManualTarget"};
+constexpr std::array<const char*, 4> kPlaneYOffset{
+    "planeAYOffset", "planeBYOffset", "planeCYOffset", "planeDYOffset"};
+constexpr std::array<const char*, 4> kPlaneToneInfluence{
+    "planeAToneInfluence", "planeBToneInfluence", "planeCToneInfluence", "planeDToneInfluence"};
+constexpr std::array<const char*, 4> kPlaneABias{
+    "planeAChromaBiasA", "planeBChromaBiasA", "planeCChromaBiasA", "planeDChromaBiasA"};
+constexpr std::array<const char*, 4> kPlaneBBias{
+    "planeAChromaBiasB", "planeBChromaBiasB", "planeCChromaBiasB", "planeDChromaBiasB"};
+constexpr std::array<const char*, 4> kPlaneChromaInfluence{
+    "planeAChromaInfluence", "planeBChromaInfluence", "planeCChromaInfluence", "planeDChromaInfluence"};
 
 class PigmentEffect final : public OFX::ImageEffect {
  public:
   explicit PigmentEffect(OfxImageEffectHandle handle)
       : ImageEffect(handle), destination_(fetchClip(kOfxImageEffectOutputClipName)),
         source_(fetchClip(kOfxImageEffectSimpleSourceClipName)) {
-    if (getContext() == OFX::eContextGeneral) mask_ = fetchClip(kMaskClip);
+    if (getContext() == OFX::eContextGeneral) {
+      mask_ = fetchClip(kMaskClip);
+      planeMap_ = fetchClip(kPlaneMapClip);
+    }
 #define FETCH_DOUBLE(member, name) member = fetchDoubleParam(name)
     FETCH_DOUBLE(amount_, kAmount); FETCH_DOUBLE(massScale_, kMassScale);
     FETCH_DOUBLE(massStrength_, kMassStrength); FETCH_DOUBLE(toneSimilarity_, kToneSimilarity);
@@ -79,6 +111,26 @@ class PigmentEffect final : public OFX::ImageEffect {
     gamut_ = fetchChoiceParam(kWorkingGamut);
     comparison_ = fetchChoiceParam(kComparison);
     debug_ = fetchChoiceParam(kDebug);
+    debugPlane_ = fetchChoiceParam(kDebugPlane);
+    fineExtinction_ = fetchDoubleParam(kFineExtinction);
+    mediumExtinction_ = fetchDoubleParam(kMediumExtinction);
+    broadRetention_ = fetchDoubleParam(kBroadRetention);
+    detailStructurePreserve_ = fetchDoubleParam(kDetailStructurePreserve);
+    yTransitionWidth_ = fetchDoubleParam(kYTransitionWidth);
+    abTransitionWidth_ = fetchDoubleParam(kABTransitionWidth);
+    transitionStructureRespect_ = fetchDoubleParam(kTransitionStructureRespect);
+    localSoftness_ = fetchDoubleParam(kLocalSoftness);
+    for (int i = 0; i < 4; ++i) {
+      planeEnable_[i] = fetchBooleanParam(kPlaneEnable[i]);
+      planeAmount_[i] = fetchDoubleParam(kPlaneAmount[i]);
+      planeSourceMix_[i] = fetchDoubleParam(kPlaneSourceMix[i]);
+      planeManualTarget_[i] = fetchRGBParam(kPlaneManualTarget[i]);
+      planeYOffset_[i] = fetchDoubleParam(kPlaneYOffset[i]);
+      planeToneInfluence_[i] = fetchDoubleParam(kPlaneToneInfluence[i]);
+      planeABias_[i] = fetchDoubleParam(kPlaneABias[i]);
+      planeBBias_[i] = fetchDoubleParam(kPlaneBBias[i]);
+      planeChromaInfluence_[i] = fetchDoubleParam(kPlaneChromaInfluence[i]);
+    }
   }
 
   void render(const OFX::RenderArguments& args) override;
@@ -93,7 +145,7 @@ class PigmentEffect final : public OFX::ImageEffect {
 
  private:
   IntegratedPigmentParams parameters(double time) const;
-  OFX::Clip *destination_ = nullptr, *source_ = nullptr, *mask_ = nullptr;
+  OFX::Clip *destination_ = nullptr, *source_ = nullptr, *mask_ = nullptr, *planeMap_ = nullptr;
   OFX::DoubleParam *amount_ = nullptr, *massScale_ = nullptr, *massStrength_ = nullptr,
       *toneSimilarity_ = nullptr, *chromaSimilarity_ = nullptr, *lumaAttraction_ = nullptr,
       *chromaAttraction_ = nullptr, *structureScale_ = nullptr, *structurePreserve_ = nullptr,
@@ -105,9 +157,18 @@ class PigmentEffect final : public OFX::ImageEffect {
       *modeSelectivity_ = nullptr,
       *boundaryScale_ = nullptr, *veilTonalBias_ = nullptr, *chromaLumaCoupling_ = nullptr,
       *mix_ = nullptr;
+  OFX::DoubleParam *fineExtinction_ = nullptr, *mediumExtinction_ = nullptr,
+      *broadRetention_ = nullptr, *detailStructurePreserve_ = nullptr,
+      *yTransitionWidth_ = nullptr, *abTransitionWidth_ = nullptr,
+      *transitionStructureRespect_ = nullptr, *localSoftness_ = nullptr;
+  std::array<OFX::BooleanParam*, 4> planeEnable_{};
+  std::array<OFX::DoubleParam*, 4> planeAmount_{}, planeSourceMix_{}, planeYOffset_{},
+      planeToneInfluence_{}, planeABias_{}, planeBBias_{}, planeChromaInfluence_{};
+  std::array<OFX::RGBParam*, 4> planeManualTarget_{};
   OFX::IntParam* veilSeed_ = nullptr;
   OFX::BooleanParam* invertMask_ = nullptr;
-  OFX::ChoiceParam *gamut_ = nullptr, *comparison_ = nullptr, *debug_ = nullptr;
+  OFX::ChoiceParam *gamut_ = nullptr, *comparison_ = nullptr, *debug_ = nullptr,
+      *debugPlane_ = nullptr;
 #ifdef PIGMENT_ENABLE_METAL
   std::unique_ptr<metal::MetalInstance> metal_;
 #endif
@@ -138,9 +199,35 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   gamut_->getValueAtTime(time, value);
   p.gamut = static_cast<WorkingGamut>(std::max(0, std::min(3, value)));
   comparison_->getValueAtTime(time, value);
-  p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(3, value)));
+  p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(4, value)));
   debug_->getValueAtTime(time, value);
-  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(26, value)));
+  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(44, value)));
+  debugPlane_->getValueAtTime(time, value);
+  p.debugPlane = static_cast<PictorialDebugPlane>(std::max(0, std::min(4, value)));
+  p.pictorial.fineExtinction = static_cast<float>(fineExtinction_->getValueAtTime(time));
+  p.pictorial.mediumExtinction = static_cast<float>(mediumExtinction_->getValueAtTime(time));
+  p.pictorial.broadRetention = static_cast<float>(broadRetention_->getValueAtTime(time));
+  p.pictorial.detailStructurePreserve = static_cast<float>(detailStructurePreserve_->getValueAtTime(time));
+  p.pictorial.yTransitionWidth = static_cast<float>(yTransitionWidth_->getValueAtTime(time));
+  p.pictorial.abTransitionWidth = static_cast<float>(abTransitionWidth_->getValueAtTime(time));
+  p.pictorial.transitionStructureRespect = static_cast<float>(transitionStructureRespect_->getValueAtTime(time));
+  p.pictorial.localSoftness = static_cast<float>(localSoftness_->getValueAtTime(time));
+  MatrixOpponentTransform opponent(p.gamut);
+  for (int i = 0; i < 4; ++i) {
+    auto& plane = p.pictorial.planes[i];
+    plane.enabled = planeEnable_[i]->getValueAtTime(time);
+    plane.amount = static_cast<float>(planeAmount_[i]->getValueAtTime(time));
+    plane.sourceMix = static_cast<float>(planeSourceMix_[i]->getValueAtTime(time));
+    double r = 0.18, g = 0.18, b = 0.18;
+    planeManualTarget_[i]->getValueAtTime(time, r, g, b);
+    plane.manualTarget = opponent.toYab({static_cast<float>(r), static_cast<float>(g),
+                                         static_cast<float>(b)});
+    plane.yOffset = static_cast<float>(planeYOffset_[i]->getValueAtTime(time));
+    plane.toneInfluence = static_cast<float>(planeToneInfluence_[i]->getValueAtTime(time));
+    plane.aBias = static_cast<float>(planeABias_[i]->getValueAtTime(time));
+    plane.bBias = static_cast<float>(planeBBias_[i]->getValueAtTime(time));
+    plane.chromaInfluence = static_cast<float>(planeChromaInfluence_[i]->getValueAtTime(time));
+  }
   return p;
 }
 
@@ -148,6 +235,8 @@ bool PigmentEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*&
                                double& identityTime) {
   const auto p = parameters(args.time);
   if (p.comparison == PigmentComparisonMode::Original ||
+      (p.comparison == PigmentComparisonMode::PictorialPlanes &&
+       (!planeMap_ || !planeMap_->isConnected()) && p.debugView == PigmentDebugView::Final) ||
       (p.debugView == PigmentDebugView::Final && (p.amount == 0.0f || p.mix == 0.0f))) {
     clip = source_; identityTime = args.time; return true;
   }
@@ -164,6 +253,7 @@ void PigmentEffect::getRegionsOfInterest(const OFX::RegionsOfInterestArguments& 
   const OfxRectD rod = source_->getRegionOfDefinition(args.time);
   rois.setRegionOfInterest(*source_, rod);
   if (mask_) rois.setRegionOfInterest(*mask_, rod);
+  if (planeMap_) rois.setRegionOfInterest(*planeMap_, rod);
 }
 
 void PigmentEffect::render(const OFX::RenderArguments& args) {
@@ -181,6 +271,21 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
     maskImage.reset(mask_->fetchImage(args.time));
     if (!maskImage || maskImage->getPixelDepth() != OFX::eBitDepthFloat)
       OFX::throwSuiteStatusException(kOfxStatErrUnsupported);
+  }
+  std::unique_ptr<OFX::Image> planeMapImage;
+  if (planeMap_ && planeMap_->isConnected()) {
+    planeMapImage.reset(planeMap_->fetchImage(args.time));
+    if (!planeMapImage || planeMapImage->getPixelDepth() != OFX::eBitDepthFloat ||
+        planeMapImage->getPixelComponents() != OFX::ePixelComponentRGBA ||
+        planeMapImage->getPixelAspectRatio() != source->getPixelAspectRatio() ||
+        ofx::toRect(planeMapImage->getBounds()).x1 != ofx::toRect(source->getBounds()).x1 ||
+        ofx::toRect(planeMapImage->getBounds()).y1 != ofx::toRect(source->getBounds()).y1 ||
+        ofx::toRect(planeMapImage->getBounds()).x2 != ofx::toRect(source->getBounds()).x2 ||
+        ofx::toRect(planeMapImage->getBounds()).y2 != ofx::toRect(source->getBounds()).y2) {
+      setPersistentMessage(OFX::Message::eMessageError, "PigmentPlaneMap",
+                           "Plane Map must be float RGBA with the same bounds and PAR as Source.");
+      OFX::throwSuiteStatusException(kOfxStatErrUnsupported);
+    }
   }
   auto p = parameters(args.time);
   p.premultiplied = source->getPreMultiplication() == OFX::eImagePreMultiplied;
@@ -201,6 +306,9 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
   request.params = p;
   request.geometry = {source->getPixelAspectRatio(), args.renderScale.x, args.renderScale.y};
   if (maskImage) { request.mask = makeView(*maskImage); request.hasMask = true; }
+  if (planeMapImage) {
+    request.planeMap = makeView(*planeMapImage); request.hasPlaneMap = true;
+  }
   if (metal_->renderIntegrated(request)) { clearPersistentMessage(); return; }
   const auto& diagnostics = metal_->diagnostics();
   if (args.isEnabledMetalRender) OFX::throwSuiteStatusException(kOfxStatGPURenderFailed);
@@ -268,6 +376,9 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   if (context == OFX::eContextGeneral) {
     auto* mask = d.defineClip(kMaskClip); mask->addSupportedComponent(OFX::ePixelComponentAlpha);
     mask->setOptional(true); mask->setIsMask(true); mask->setSupportsTiles(false);
+    auto* planeMap = d.defineClip(kPlaneMapClip);
+    planeMap->addSupportedComponent(OFX::ePixelComponentRGBA);
+    planeMap->setOptional(true); planeMap->setIsMask(false); planeMap->setSupportsTiles(false);
   }
   auto* output = d.defineClip(kOfxImageEffectOutputClipName); addComponents(output);
 
@@ -309,6 +420,60 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   auto* outputGroup = group(d, "outputGroup", "Output");
   number(d, *outputGroup, kMix, "Mix", 1, 0, 1, 1, "Final straight-RGB blend", OFX::eDoubleTypeScale);
 
+  auto* planes = group(d, "pictorialPlanesGroup", "Pictorial Planes", false);
+  constexpr std::array<const char*, 4> planeLabels{"Plane A", "Plane B", "Plane C", "Plane D"};
+  for (int i = 0; i < 4; ++i) {
+    const std::string groupName = std::string("pictorialPlane") + char('A' + i) + "Group";
+    auto* planeGroup = group(d, groupName.c_str(), planeLabels[i], false);
+    planeGroup->setParent(*planes);
+    auto* enable = ofx::defineBoolean(d, kPlaneEnable[i], "Enable", true,
+                                     "Enable this Plane Map membership channel");
+    enable->setParent(*planeGroup);
+    number(d, *planeGroup, kPlaneAmount[i], "Amount", 1, 0, 1, 1,
+           "Scale this plane's membership", OFX::eDoubleTypeScale);
+    number(d, *planeGroup, kPlaneSourceMix[i], "Source-Derived Target Mix", 1, 0, 1, 1,
+           "Blend from the manual constant target to the robust source-derived field",
+           OFX::eDoubleTypeScale);
+    auto* target = d.defineRGBParam(kPlaneManualTarget[i]);
+    target->setLabels("Manual Target Color", "Manual Target Color", "Manual Target Color");
+    target->setScriptName(kPlaneManualTarget[i]); target->setDefault(0.18, 0.18, 0.18);
+    target->setRange(-16, -16, -16, 16, 16, 16);
+    target->setDisplayRange(0, 0, 0, 2, 2, 2); target->setParent(*planeGroup);
+    number(d, *planeGroup, kPlaneYOffset[i], "Tone Offset", 0, -16, 16, 2,
+           "Additive unclipped offset in internal Y");
+    number(d, *planeGroup, kPlaneToneInfluence[i], "Tone Influence", 1, 0, 1, 1,
+           "Influence of the plane's Y target", OFX::eDoubleTypeScale);
+    number(d, *planeGroup, kPlaneABias[i], "Chroma Bias A", 0, -4, 4, 1,
+           "Additive opponent-axis A bias");
+    number(d, *planeGroup, kPlaneBBias[i], "Chroma Bias B", 0, -4, 4, 1,
+           "Additive opponent-axis B bias");
+    number(d, *planeGroup, kPlaneChromaInfluence[i], "Chroma Influence", 1, 0, 1, 1,
+           "Influence of the plane's opponent-chroma target", OFX::eDoubleTypeScale);
+  }
+
+  auto* information = group(d, "pictorialInformationGroup", "Pictorial Information", false);
+  number(d, *information, kFineExtinction, "Fine Extinction", 0.9, 0, 1, 1,
+         "Remove the fine source residual inside plane ownership", OFX::eDoubleTypeScale);
+  number(d, *information, kMediumExtinction, "Medium Extinction", 0.8, 0, 1, 1,
+         "Remove the medium source residual inside plane ownership", OFX::eDoubleTypeScale);
+  number(d, *information, kBroadRetention, "Broad Retention", 0.2, 0, 1, 1,
+         "Retain source broad shading instead of the fitted plane target", OFX::eDoubleTypeScale);
+  number(d, *information, kDetailStructurePreserve, "Detail Structure Preserve", 0.7, 0, 1, 1,
+         "Protect residual detail only at scale-persistent source structure",
+         OFX::eDoubleTypeScale);
+
+  auto* transitions = group(d, "pictorialTransitionsGroup", "Plane Transitions", false);
+  number(d, *transitions, kYTransitionWidth, "Y Transition Width", 12, 0, 512, 128,
+         "Full-resolution 10-90 percent luminance-membership transition width");
+  number(d, *transitions, kABTransitionWidth, "Chroma Transition Width", 48, 0, 1024, 256,
+         "Full-resolution 10-90 percent opponent-chroma transition width");
+  number(d, *transitions, kTransitionStructureRespect, "Transition Structure Respect", 0.7,
+         0, 1, 1, "Source-structure permeability for membership propagation",
+         OFX::eDoubleTypeScale);
+  number(d, *transitions, kLocalSoftness, "Local Softness", 0, 0, 1, 1,
+         "Optional downstream optical softness; zero fully bypasses it",
+         OFX::eDoubleTypeScale);
+
   auto* advanced = group(d, "advancedGroup", "Research Advanced", false);
   number(d, *advanced, kRegionSoftness, "Region Softness", 0.5, 0.1, 4, 2, "Tail softness of joint spatial/color attraction");
   number(d, *advanced, kModeSelectivity, "Mode Selectivity", 0.65, 0, 1, 1,
@@ -328,6 +493,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   comparison->appendOption("Current Guided DetailCollapse");
   comparison->appendOption("Weighted Mean (legacy research)");
   comparison->appendOption("Representative Mode");
+  comparison->appendOption("Pictorial Planes (Phase 3.2)");
   comparison->setDefault(3); comparison->setParent(*advanced);
   auto* debug = d.defineChoiceParam(kDebug); debug->setLabels("Debug View", "Debug View", "Debug View");
   debug->setScriptName(kDebug);
@@ -338,9 +504,21 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
       "Chroma Migration Result", "Fine Residual", "Medium Residual", "Internal Variation",
       "Pre-Reintegration", "Difference From Original", "Local Density",
       "Winning / Dominant Mode", "Mode Confidence", "Representative Distance",
-      "Candidate Competition", "Legacy Weighted Mean", "Representative Mode Result"})
+      "Candidate Competition", "Legacy Weighted Mean", "Representative Mode Result",
+      "Raw Plane Map", "Normalized Plane Membership", "Base / Unassigned Membership",
+      "Y Transition Membership", "AB Transition Membership", "Plane Broad Y Target",
+      "Plane Broad AB Target", "Combined Y Target", "Combined AB Target",
+      "Broad Component", "Fine Residual", "Medium Residual", "Extinction Amount",
+      "Structure / Protection", "Pre-Veil Result", "Pre-Softness Result", "Fit Error",
+      "Plane Difference From Original"})
     debug->appendOption(option);
   debug->setDefault(0); debug->setParent(*advanced);
+  auto* debugPlane = d.defineChoiceParam(kDebugPlane);
+  debugPlane->setLabels("Debug Plane", "Debug Plane", "Debug Plane");
+  debugPlane->setScriptName(kDebugPlane);
+  for (const char* option : {"Plane A", "Plane B", "Plane C", "Plane D", "Composite"})
+    debugPlane->appendOption(option);
+  debugPlane->setDefault(4); debugPlane->setParent(*advanced);
 }
 
 OFX::ImageEffect* PigmentFactory::createInstance(OfxImageEffectHandle handle,

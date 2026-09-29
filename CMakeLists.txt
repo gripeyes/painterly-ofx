@@ -29,6 +29,7 @@ add_library(pigment_core STATIC
   src/core/RollingYabMass.cpp
   src/core/AcceleratedYabMass.cpp
   src/core/IntegratedPigment.cpp
+  src/core/PictorialPlanes.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)
@@ -96,6 +97,10 @@ if(BUILD_TESTING)
   add_executable(pigment_integrated_tests tests/IntegratedPigmentTests.cpp)
   target_link_libraries(pigment_integrated_tests PRIVATE pigment_core)
   add_test(NAME pigment_integrated_tests COMMAND pigment_integrated_tests)
+
+  add_executable(pigment_pictorial_planes_tests tests/PictorialPlanesTests.cpp)
+  target_link_libraries(pigment_pictorial_planes_tests PRIVATE pigment_core)
+  add_test(NAME pigment_pictorial_planes_tests COMMAND pigment_pictorial_planes_tests)
 
   add_executable(pigment_backend_benchmark tests/BackendBenchmark.cpp)
   target_link_libraries(pigment_backend_benchmark PRIVATE pigment_core)
@@ -167,7 +172,18 @@ if(PIGMENT_BUILD_OFX)
                 "${PIGMENT_METALLIB}" "${PIGMENT_BUNDLE_RESOURCES}/Pigment.metallib"
         VERBATIM)
     endif()
-    add_custom_target(pigment_bundle ALL DEPENDS Pigment)
+    if(TARGET pigment_metallib)
+      add_custom_target(pigment_bundle ALL
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${PIGMENT_BUNDLE_MACOS}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${PIGMENT_BUNDLE_RESOURCES}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:Pigment>" "${PIGMENT_BUNDLE_MACOS}/Pigment.ofx"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${PIGMENT_METALLIB}" "${PIGMENT_BUNDLE_RESOURCES}/Pigment.metallib"
+        DEPENDS Pigment pigment_metallib VERBATIM)
+    else()
+      add_custom_target(pigment_bundle ALL DEPENDS Pigment)
+    endif()
     add_custom_target(sign-local
       COMMAND codesign --force --sign - "${PIGMENT_BUNDLE_DIR}"
       DEPENDS pigment_bundle VERBATIM)

@@ -109,6 +109,20 @@ Open `tests/visual/PigmentValidation.nk` after that check for a 1920×1080 inter
 Viewer setup. The node returned by Nuke's Tab search is labelled `Pigment`, while its
 persistent OFX identifier remains `org.painterlyofx.Pigment`.
 
+### Pictorial Planes input
+
+In the General context, Pigment exposes a third input named **PlaneMap**. Pack four
+independent float ownership masks into raw RGBA: R=Plane A, G=Plane B, B=Plane C,
+A=Plane D. Use Copy/ShuffleCopy after four Roto or RotoPaint masks, then Reformat and
+Crop the map to exactly match the Source format, bounds, RoD, and pixel aspect ratio.
+Do not premultiply or color-convert this data input. The ordinary **Mask** input stays
+separate and only gates effect strength.
+
+The saved `PigmentValidation.nk` contains an editable procedural RGBA map connected to
+PlaneMap. Replace that Expression node with painted masks for artistic evaluation.
+Choose **Pictorial Planes (Phase 3.2)** under Comparison Mode; newly created nodes
+continue to default to Representative Mode until the isolation gate is approved.
+
 These checks use the actual OFX plug-in. Passing core tests alone does not prove that
 Nuke discovered or rendered the bundle.
 

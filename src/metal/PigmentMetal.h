@@ -64,7 +64,9 @@ struct IntegratedMetalExecutionRequest {
   MetalImageView source;
   MetalImageView destination;
   MetalImageView mask;
+  MetalImageView planeMap;
   bool hasMask = false;
+  bool hasPlaneMap = false;
   bool nativeHostBuffers = false;
   void* hostCommandQueue = nullptr;
   RectI renderWindow{};

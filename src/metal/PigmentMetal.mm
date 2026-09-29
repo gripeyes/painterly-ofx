@@ -64,11 +64,31 @@ struct GpuIntegratedParams {
   float whiteX, whiteZ;
   float rgbToXyz[9];
   float xyzToRgb[9];
+  std::uint32_t hasPlaneMap, debugPlane;
+  std::uint32_t planeEnabled[4];
+  float planeAmount[4], planeSourceMix[4];
+  float planeManualY[4], planeManualA[4], planeManualB[4];
+  float planeYOffset[4], planeToneInfluence[4];
+  float planeABias[4], planeBBias[4], planeChromaInfluence[4];
+  float fineExtinction, mediumExtinction, broadRetention, detailStructurePreserve;
+  float yTransitionWidth, abTransitionWidth, transitionStructureRespect, localSoftness;
 };
 
 struct GpuRegionLevelParams {
   std::uint32_t width = 0, height = 0;
   float levelScale = 1.0f, radiusX = 1.0f, radiusY = 1.0f, quarterBlend = 0.0f;
+};
+
+struct GpuPlaneLevelParams {
+  std::uint32_t width = 0, height = 0;
+  float levelScale = 0.25f, lambdaX = 0.0f, lambdaY = 0.0f;
+};
+
+struct GpuPlaneFitModel {
+  float centerX = 0, centerY = 0, scaleX = 1, scaleY = 1;
+  float coefficient[18]{};
+  float fitError = 0;
+  std::uint32_t order = 0, valid = 0, padding = 0;
 };
 
 NSString* metallibPath() {
@@ -120,7 +140,11 @@ struct DeviceResources {
                              "pigment_integrated_reconstruct_mass",
                              "pigment_integrated_boundary_extinction",
                              "pigment_integrated_chroma", "pigment_integrated_reintegrate",
-                             "pigment_integrated_final"}) {
+                             "pigment_integrated_final", "pigment_plane_membership_init",
+                             "pigment_plane_structure", "pigment_plane_transition_relax",
+                             "pigment_plane_fit_solve", "pigment_plane_evaluate_combine",
+                             "pigment_plane_apply_veil", "pigment_plane_local_softness_blend",
+                             "pigment_plane_final"}) {
       id<MTLFunction> function = [library newFunctionWithName:
           [NSString stringWithUTF8String:name]];
       if (!function) {
@@ -141,7 +165,7 @@ struct DeviceResources {
     }
   }
 
-  bool valid() const { return library != nil && pipelines.size() == 23; }
+  bool valid() const { return library != nil && pipelines.size() == 31; }
 };
 
 std::mutex gRegistryMutex;
@@ -398,6 +422,30 @@ GpuIntegratedParams makeIntegratedParams(const IntegratedMetalExecutionRequest& 
       std::max(request.geometry.renderScaleX, 1.0e-9));
   result.originY = static_cast<float>(request.renderWindow.y1 /
       std::max(request.geometry.renderScaleY, 1.0e-9));
+  result.hasPlaneMap = request.hasPlaneMap;
+  result.debugPlane = static_cast<std::uint32_t>(p.debugPlane);
+  for (int i = 0; i < 4; ++i) {
+    const auto& plane = p.pictorial.planes[i];
+    result.planeEnabled[i] = plane.enabled;
+    result.planeAmount[i] = plane.amount;
+    result.planeSourceMix[i] = plane.sourceMix;
+    result.planeManualY[i] = plane.manualTarget.y;
+    result.planeManualA[i] = plane.manualTarget.a;
+    result.planeManualB[i] = plane.manualTarget.b;
+    result.planeYOffset[i] = plane.yOffset;
+    result.planeToneInfluence[i] = plane.toneInfluence;
+    result.planeABias[i] = plane.aBias;
+    result.planeBBias[i] = plane.bBias;
+    result.planeChromaInfluence[i] = plane.chromaInfluence;
+  }
+  result.fineExtinction = p.pictorial.fineExtinction;
+  result.mediumExtinction = p.pictorial.mediumExtinction;
+  result.broadRetention = p.pictorial.broadRetention;
+  result.detailStructurePreserve = p.pictorial.detailStructurePreserve;
+  result.yTransitionWidth = p.pictorial.yTransitionWidth;
+  result.abTransitionWidth = p.pictorial.abTransitionWidth;
+  result.transitionStructureRespect = p.pictorial.transitionStructureRespect;
+  result.localSoftness = p.pictorial.localSoftness;
   const auto matrix = opponentMatrixData(p.gamut);
   result.whiteX = matrix.whiteX; result.whiteZ = matrix.whiteZ;
   std::copy(matrix.rgbToXyz.begin(), matrix.rgbToXyz.end(), result.rgbToXyz);
@@ -418,6 +466,10 @@ struct MetalInstance::Impl {
   NSArray<id<MTLTexture>>* cachedIntegratedTextures = nil;
   NSUInteger cachedIntegratedWidth = 0;
   NSUInteger cachedIntegratedHeight = 0;
+  NSArray<id<MTLTexture>>* cachedPlaneTextures = nil;
+  id<MTLBuffer> cachedPlaneModels = nil;
+  NSUInteger cachedPlaneWidth = 0;
+  NSUInteger cachedPlaneHeight = 0;
 
   bool render(const MetalExecutionRequest& request) {
     std::lock_guard<std::mutex> lock(mutex);
@@ -765,7 +817,9 @@ struct MetalInstance::Impl {
         !validateView(request.source, request.renderWindow, request.nativeHostBuffers, reason) ||
         !validateView(request.destination, request.renderWindow, request.nativeHostBuffers, reason) ||
         (request.hasMask && !validateView(request.mask, request.renderWindow,
-                                          request.nativeHostBuffers, reason))) {
+                                          request.nativeHostBuffers, reason)) ||
+        (request.hasPlaneMap && !validateView(request.planeMap, request.renderWindow,
+                                              request.nativeHostBuffers, reason))) {
       diagnostics.failure = MetalFailure::InvalidLayout;
       diagnostics.message = reason.empty() ? "Unsupported integrated image layout" : reason;
       return false;
@@ -794,23 +848,29 @@ struct MetalInstance::Impl {
     }
 
     const auto wrapStart = Clock::now();
-    BufferBinding source, destination, mask;
+    BufferBinding source, destination, mask, planeMap;
     if (request.nativeHostBuffers) {
       source = nativeBinding(request.source, request.renderWindow, reason);
       destination = nativeBinding(request.destination, request.renderWindow, reason);
       if (request.hasMask) mask = nativeBinding(request.mask, request.renderWindow, reason);
+      if (request.hasPlaneMap)
+        planeMap = nativeBinding(request.planeMap, request.renderWindow, reason);
       diagnostics.path = MetalPath::NativeHostBuffers;
     } else {
       source = cpuInputBinding(device, request.source, request.renderWindow, diagnostics);
       destination = cpuOutputBinding(device, request.destination, request.renderWindow);
       if (request.hasMask)
         mask = cpuInputBinding(device, request.mask, request.renderWindow, diagnostics);
+      if (request.hasPlaneMap)
+        planeMap = cpuInputBinding(device, request.planeMap, request.renderWindow, diagnostics);
       diagnostics.sourceNoCopy = source.noCopy;
       diagnostics.destinationNoCopy = destination.noCopy;
       diagnostics.path = source.noCopy && destination.noCopy &&
-          (!request.hasMask || mask.noCopy) ? MetalPath::CpuNoCopy : MetalPath::CpuStaging;
+          (!request.hasMask || mask.noCopy) && (!request.hasPlaneMap || planeMap.noCopy)
+          ? MetalPath::CpuNoCopy : MetalPath::CpuStaging;
     }
-    if (!source.buffer || !destination.buffer || (request.hasMask && !mask.buffer)) {
+    if (!source.buffer || !destination.buffer || (request.hasMask && !mask.buffer) ||
+        (request.hasPlaneMap && !planeMap.buffer)) {
       diagnostics.failure = request.nativeHostBuffers ? MetalFailure::InvalidLayout
                                                       : MetalFailure::Allocation;
       diagnostics.message = reason.empty() ? "Could not bind integrated Metal buffers" : reason;
@@ -823,10 +883,247 @@ struct MetalInstance::Impl {
       diagnostics.message = "Host queue and native buffers use different Metal devices";
       return false;
     }
+    if (request.nativeHostBuffers && request.hasPlaneMap && planeMap.buffer.device != device) {
+      diagnostics.failure = MetalFailure::InvalidLayout;
+      diagnostics.message = "Host queue and Plane Map buffer use different Metal devices";
+      return false;
+    }
     diagnostics.wrapOrUploadMs = milliseconds(wrapStart, Clock::now());
 
     const NSUInteger width = request.renderWindow.width();
     const NSUInteger height = request.renderWindow.height();
+    if (request.params.comparison == PigmentComparisonMode::PictorialPlanes) {
+      const NSUInteger quarterWidth = std::max<NSUInteger>(1, (width + 3) / 4);
+      const NSUInteger quarterHeight = std::max<NSUInteger>(1, (height + 3) / 4);
+      const bool reused = !request.nativeHostBuffers && cachedPlaneTextures &&
+          cachedDevice == device && cachedPlaneWidth == width && cachedPlaneHeight == height;
+      NSArray<id<MTLTexture>>* textures = cachedPlaneTextures;
+      id<MTLBuffer> models = cachedPlaneModels;
+      if (!reused) {
+        NSMutableArray<id<MTLTexture>>* allocated = [NSMutableArray arrayWithCapacity:22];
+        for (int i = 0; i < 10; ++i)
+          [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, width, height)];
+        for (int i = 0; i < 2; ++i)
+          [allocated addObject:texture(device, MTLPixelFormatR32Float, width, height)];
+        [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, quarterWidth, quarterHeight)];
+        [allocated addObject:texture(device, MTLPixelFormatR32Float, quarterWidth, quarterHeight)];
+        for (int i = 0; i < 4; ++i) {
+          [allocated addObject:texture(device, MTLPixelFormatRGBA32Float, quarterWidth, quarterHeight)];
+          [allocated addObject:texture(device, MTLPixelFormatR32Float, quarterWidth, quarterHeight)];
+        }
+        textures = [allocated copy];
+        models = [device newBufferWithLength:sizeof(GpuPlaneFitModel) * 4
+                                     options:MTLResourceStorageModePrivate];
+        if (textures.count != 22 || !models) {
+          diagnostics.failure = MetalFailure::Allocation;
+          diagnostics.message = "Could not allocate Pictorial Planes scratch resources";
+          return false;
+        }
+        if (!request.nativeHostBuffers) {
+          cachedDevice = device; cachedPlaneWidth = width; cachedPlaneHeight = height;
+          cachedPlaneTextures = textures; cachedPlaneModels = models;
+        }
+      }
+      for (id<MTLTexture> value in textures) {
+        if (!value) { diagnostics.failure = MetalFailure::Allocation; return false; }
+        diagnostics.scratchBytes += value.allocatedSize;
+        if (!reused) ++diagnostics.scratchAllocations;
+      }
+      diagnostics.scratchBytes += models.allocatedSize;
+
+      id<MTLTexture> original = textures[0], fineBlur = textures[1], broad = textures[2];
+      id<MTLTexture> nearBlur = textures[3], farBlur = textures[4];
+      id<MTLTexture> combinedTarget = textures[5], preVeil = textures[6];
+      id<MTLTexture> preSoftness = textures[7], softnessBlur = textures[8];
+      id<MTLTexture> softened = textures[9], protection = textures[10], extinction = textures[11];
+      id<MTLTexture> anchorPlanes = textures[12], anchorBase = textures[13];
+      id<MTLTexture> yPlanesA = textures[14], yBaseA = textures[15];
+      id<MTLTexture> yPlanesB = textures[16], yBaseB = textures[17];
+      id<MTLTexture> abPlanesA = textures[18], abBaseA = textures[19];
+      id<MTLTexture> abPlanesB = textures[20], abBaseB = textures[21];
+
+      id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+      if (!commandBuffer) { diagnostics.failure = MetalFailure::Encoding; return false; }
+      commandBuffer.label = @"Pigment Pictorial Planes Graph";
+      const GpuIntegratedParams params = makeIntegratedParams(request);
+      const GpuImageLayout emptyMask{};
+      const BufferBinding& mapBinding = request.hasPlaneMap ? planeMap : source;
+      auto pipeline = [&](const char* name) { return resources->pipelines.at(name); };
+      const auto encodeStart = Clock::now();
+
+      dispatch(commandBuffer, pipeline("pigment_integrated_rgb_to_yab"), width, height,
+               [&](id<MTLComputeCommandEncoder> e) {
+        [e setBuffer:source.buffer offset:0 atIndex:0];
+        [e setBytes:&source.layout length:sizeof(source.layout) atIndex:1];
+        [e setBytes:&params length:sizeof(params) atIndex:2]; [e setTexture:original atIndex:0];
+      });
+
+      const float scaleX = static_cast<float>(request.geometry.renderScaleX /
+          std::max(request.geometry.pixelAspect, 1.0e-6));
+      const float scaleY = static_cast<float>(request.geometry.renderScaleY);
+      MPSImageGaussianBlur* fineGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+          sigma:std::max(0.01f, 0.5f * (scaleX + scaleY))];
+      fineGaussian.edgeMode = MPSImageEdgeModeClamp;
+      [fineGaussian encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:fineBlur];
+      const float broadSigma = std::max(2.0f, request.params.structureScale) *
+          0.5f * (scaleX + scaleY);
+      MPSImageGaussianBlur* broadGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+          sigma:std::max(0.01f, broadSigma)];
+      broadGaussian.edgeMode = MPSImageEdgeModeClamp;
+      [broadGaussian encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:broad];
+      MPSImageGaussianBlur* nearGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+          sigma:std::max(0.01f, request.params.structureScale * 0.5f * (scaleX + scaleY))];
+      nearGaussian.edgeMode = MPSImageEdgeModeClamp;
+      [nearGaussian encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:nearBlur];
+      MPSImageGaussianBlur* farGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+          sigma:std::max(0.01f, std::max(request.params.boundaryScale,
+                                        request.params.structureScale * 2.0f) *
+                                        0.5f * (scaleX + scaleY))];
+      farGaussian.edgeMode = MPSImageEdgeModeClamp;
+      [farGaussian encodeToCommandBuffer:commandBuffer sourceTexture:original destinationTexture:farBlur];
+      dispatch(commandBuffer, pipeline("pigment_plane_structure"), width, height,
+               [&](id<MTLComputeCommandEncoder> e) {
+        [e setTexture:nearBlur atIndex:0]; [e setTexture:farBlur atIndex:1];
+        [e setBytes:&params length:sizeof(params) atIndex:0]; [e setTexture:protection atIndex:2];
+      });
+
+      GpuPlaneLevelParams baseLevel{static_cast<std::uint32_t>(quarterWidth),
+          static_cast<std::uint32_t>(quarterHeight), 0.25f, 0.0f, 0.0f};
+      auto initializeMembership = [&](id<MTLTexture> planeTexture, id<MTLTexture> baseTexture) {
+        dispatch(commandBuffer, pipeline("pigment_plane_membership_init"), quarterWidth, quarterHeight,
+                 [&](id<MTLComputeCommandEncoder> e) {
+          [e setBuffer:mapBinding.buffer offset:0 atIndex:0];
+          [e setBytes:&mapBinding.layout length:sizeof(mapBinding.layout) atIndex:1];
+          [e setBytes:&params length:sizeof(params) atIndex:2];
+          [e setBytes:&baseLevel length:sizeof(baseLevel) atIndex:3];
+          [e setTexture:planeTexture atIndex:0]; [e setTexture:baseTexture atIndex:1];
+        });
+      };
+      initializeMembership(anchorPlanes, anchorBase);
+      initializeMembership(yPlanesA, yBaseA);
+      initializeMembership(abPlanesA, abBaseA);
+
+      dispatch(commandBuffer, pipeline("pigment_plane_fit_solve"), 4, 1,
+               [&](id<MTLComputeCommandEncoder> e) {
+        [e setTexture:original atIndex:0]; [e setBuffer:mapBinding.buffer offset:0 atIndex:0];
+        [e setBytes:&mapBinding.layout length:sizeof(mapBinding.layout) atIndex:1];
+        [e setBytes:&params length:sizeof(params) atIndex:2]; [e setBuffer:models offset:0 atIndex:3];
+      });
+
+      constexpr float kTransitionScale = 3.2188758248682006f;
+      auto relaxMembership = [&](float widthValue, id<MTLTexture> __strong& planesA,
+                                 id<MTLTexture> __strong& baseA,
+                                 id<MTLTexture> __strong& planesB,
+                                 id<MTLTexture> __strong& baseB) {
+        const float wx = widthValue * scaleX * 0.25f / kTransitionScale;
+        const float wy = widthValue * scaleY * 0.25f / kTransitionScale;
+        GpuPlaneLevelParams level{static_cast<std::uint32_t>(quarterWidth),
+            static_cast<std::uint32_t>(quarterHeight), 0.25f, wx * wx, wy * wy};
+        id<MTLTexture> currentPlanes = planesA, currentBase = baseA;
+        id<MTLTexture> nextPlanes = planesB, nextBase = baseB;
+        for (int iteration = 0; iteration < 64; ++iteration) {
+          dispatch(commandBuffer, pipeline("pigment_plane_transition_relax"),
+                   quarterWidth, quarterHeight, [&](id<MTLComputeCommandEncoder> e) {
+            [e setTexture:anchorPlanes atIndex:0]; [e setTexture:anchorBase atIndex:1];
+            [e setTexture:currentPlanes atIndex:2]; [e setTexture:currentBase atIndex:3];
+            [e setTexture:protection atIndex:4]; [e setBytes:&params length:sizeof(params) atIndex:0];
+            [e setBytes:&level length:sizeof(level) atIndex:1];
+            [e setTexture:nextPlanes atIndex:5]; [e setTexture:nextBase atIndex:6];
+          });
+          std::swap(currentPlanes, nextPlanes); std::swap(currentBase, nextBase);
+        }
+        planesA = currentPlanes; baseA = currentBase;
+      };
+      relaxMembership(request.params.pictorial.yTransitionWidth,
+                      yPlanesA, yBaseA, yPlanesB, yBaseB);
+      relaxMembership(request.params.pictorial.abTransitionWidth,
+                      abPlanesA, abBaseA, abPlanesB, abBaseB);
+
+      dispatch(commandBuffer, pipeline("pigment_plane_evaluate_combine"), width, height,
+               [&](id<MTLComputeCommandEncoder> e) {
+        [e setTexture:original atIndex:0]; [e setTexture:fineBlur atIndex:1];
+        [e setTexture:broad atIndex:2]; [e setTexture:yPlanesA atIndex:3];
+        [e setTexture:yBaseA atIndex:4]; [e setTexture:abPlanesA atIndex:5];
+        [e setTexture:abBaseA atIndex:6]; [e setTexture:protection atIndex:7];
+        [e setBuffer:request.hasMask ? mask.buffer : source.buffer offset:0 atIndex:0];
+        const auto& layout = request.hasMask ? mask.layout : emptyMask;
+        [e setBytes:&layout length:sizeof(layout) atIndex:1];
+        [e setBytes:&params length:sizeof(params) atIndex:2]; [e setBuffer:models offset:0 atIndex:3];
+        [e setTexture:combinedTarget atIndex:8]; [e setTexture:preVeil atIndex:9];
+        [e setTexture:extinction atIndex:10];
+      });
+      dispatch(commandBuffer, pipeline("pigment_plane_apply_veil"), width, height,
+               [&](id<MTLComputeCommandEncoder> e) {
+        [e setTexture:original atIndex:0]; [e setTexture:preVeil atIndex:1];
+        [e setBytes:&params length:sizeof(params) atIndex:0]; [e setTexture:preSoftness atIndex:2];
+      });
+      id<MTLTexture> finalYab = preSoftness;
+      if (request.params.pictorial.localSoftness > 0.0f) {
+        const float sigma = (0.5f + 5.5f * request.params.pictorial.localSoftness) *
+            0.5f * (scaleX + scaleY);
+        MPSImageGaussianBlur* softGaussian = [[MPSImageGaussianBlur alloc] initWithDevice:device
+            sigma:std::max(0.01f, sigma)];
+        softGaussian.edgeMode = MPSImageEdgeModeClamp;
+        [softGaussian encodeToCommandBuffer:commandBuffer sourceTexture:preSoftness
+                                 destinationTexture:softnessBlur];
+        dispatch(commandBuffer, pipeline("pigment_plane_local_softness_blend"), width, height,
+                 [&](id<MTLComputeCommandEncoder> e) {
+          [e setTexture:preSoftness atIndex:0]; [e setTexture:softnessBlur atIndex:1];
+          [e setBuffer:request.hasMask ? mask.buffer : source.buffer offset:0 atIndex:0];
+          const auto& layout = request.hasMask ? mask.layout : emptyMask;
+          [e setBytes:&layout length:sizeof(layout) atIndex:1];
+          [e setBytes:&params length:sizeof(params) atIndex:2]; [e setTexture:softened atIndex:2];
+        });
+        finalYab = softened;
+      }
+      dispatch(commandBuffer, pipeline("pigment_plane_final"), width, height,
+               [&](id<MTLComputeCommandEncoder> e) {
+        [e setBuffer:source.buffer offset:0 atIndex:0]; [e setBuffer:destination.buffer offset:0 atIndex:1];
+        [e setBytes:&source.layout length:sizeof(source.layout) atIndex:2];
+        [e setBytes:&destination.layout length:sizeof(destination.layout) atIndex:3];
+        [e setBuffer:mapBinding.buffer offset:0 atIndex:4];
+        [e setBytes:&mapBinding.layout length:sizeof(mapBinding.layout) atIndex:5];
+        [e setBytes:&params length:sizeof(params) atIndex:6]; [e setBuffer:models offset:0 atIndex:7];
+        [e setTexture:original atIndex:0]; [e setTexture:fineBlur atIndex:1];
+        [e setTexture:broad atIndex:2]; [e setTexture:yPlanesA atIndex:3];
+        [e setTexture:yBaseA atIndex:4]; [e setTexture:abPlanesA atIndex:5];
+        [e setTexture:abBaseA atIndex:6]; [e setTexture:combinedTarget atIndex:7];
+        [e setTexture:protection atIndex:8]; [e setTexture:extinction atIndex:9];
+        [e setTexture:preVeil atIndex:10]; [e setTexture:preSoftness atIndex:11];
+        [e setTexture:finalYab atIndex:12];
+      });
+      diagnostics.commandEncodingMs = milliseconds(encodeStart, Clock::now());
+      if (request.nativeHostBuffers) {
+        auto retainedResources = resources;
+        [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+          (void)retainedResources; (void)textures; (void)models;
+        }];
+        [commandBuffer commit];
+        diagnostics.totalMs = milliseconds(totalStart, Clock::now());
+        diagnostics.message = "Pictorial Planes using native host buffers (asynchronous)";
+        return true;
+      }
+      const auto gpuStart = Clock::now(); [commandBuffer commit]; [commandBuffer waitUntilCompleted];
+      const auto gpuEnd = Clock::now();
+      diagnostics.gpuMs = commandBuffer.GPUEndTime > commandBuffer.GPUStartTime
+          ? (commandBuffer.GPUEndTime - commandBuffer.GPUStartTime) * 1000.0
+          : milliseconds(gpuStart, gpuEnd);
+      if (commandBuffer.status == MTLCommandBufferStatusError) {
+        diagnostics.failure = MetalFailure::Execution;
+        const char* error = commandBuffer.error.localizedDescription.UTF8String;
+        diagnostics.message = error ? error : "Pictorial Planes command buffer failed";
+        return false;
+      }
+      const auto readbackStart = Clock::now();
+      unpackOutput(destination, request.destination, request.renderWindow, diagnostics);
+      diagnostics.readbackMs = milliseconds(readbackStart, Clock::now());
+      diagnostics.totalMs = milliseconds(totalStart, Clock::now());
+      diagnostics.deviceAllocatedBytes = device.currentAllocatedSize;
+      diagnostics.message = diagnostics.path == MetalPath::CpuNoCopy
+          ? "Pictorial Planes Metal using no-copy CPU buffers"
+          : "Pictorial Planes Metal using shared staging buffers";
+      return true;
+    }
     const NSUInteger halfWidth = std::max<NSUInteger>(1, (width + 1) / 2);
     const NSUInteger halfHeight = std::max<NSUInteger>(1, (height + 1) / 2);
     const NSUInteger quarterWidth = std::max<NSUInteger>(1, (width + 3) / 4);
@@ -1202,9 +1499,12 @@ struct MetalInstance::Impl {
     std::lock_guard<std::mutex> lock(mutex);
     cachedTextures = nil;
     cachedIntegratedTextures = nil;
+    cachedPlaneTextures = nil;
+    cachedPlaneModels = nil;
     cachedDevice = nil;
     cachedWidth = cachedHeight = 0;
     cachedIntegratedWidth = cachedIntegratedHeight = 0;
+    cachedPlaneWidth = cachedPlaneHeight = 0;
     diagnostics = {};
   }
 };
