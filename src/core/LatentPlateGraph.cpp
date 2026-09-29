@@ -112,26 +112,6 @@ AnalysisImage downsample(ConstYabPlanes source) {
   return out;
 }
 
-AnalysisImage conditionSpectralAnalysis(const AnalysisImage &input) {
-  AnalysisImage output = input;
-  constexpr int kernel[5]{1, 4, 6, 4, 1};
-  for (int y = 0; y < input.height; ++y)
-    for (int x = 0; x < input.width; ++x) {
-      Sample sum{};
-      float weight = 0;
-      for (int oy = -2; oy <= 2; ++oy)
-        for (int ox = -2; ox <= 2; ++ox) {
-          int sx = std::max(0, std::min(input.width - 1, x + ox)),
-              sy = std::max(0, std::min(input.height - 1, y + oy));
-          float w = float(kernel[ox + 2] * kernel[oy + 2]);
-          sum = add(sum, mul(input.pixels[input.index(sx, sy)], w));
-          weight += w;
-        }
-      output.pixels[output.index(x, y)] = mul(sum, 1 / weight);
-    }
-  return output;
-}
-
 SparseAffinityGraph buildGraph(const AnalysisImage &image,
                                const Phase4Params &params,
                                const ImageGeometry &geometry) {
@@ -365,7 +345,7 @@ std::vector<int> progressiveKMeans(const Eigen::MatrixXd &features, int count,
   int active = std::min(5, count);
   auto labels = deterministicKMeans(features, active, start);
   while (active < count) {
-    double bestGain = -1, totalError = 0;
+    double bestGain = -1;
     int bestCluster = -1;
     std::vector<int> bestMembers, bestSide;
     for (int cluster = 0; cluster < active; ++cluster) {
@@ -390,7 +370,6 @@ std::vector<int> progressiveKMeans(const Eigen::MatrixXd &features, int count,
           seed0 = p;
         }
       }
-      totalError += oldError;
       int seed1 = seed0;
       far = -1;
       for (int p : members) {
@@ -440,13 +419,7 @@ std::vector<int> progressiveKMeans(const Eigen::MatrixXd &features, int count,
         bestSide = std::move(side);
       }
     }
-    const int minimumChild = std::max(8, n / 2000);
-    int children[2]{};
-    for (int side : bestSide)
-      ++children[side];
-    if (bestCluster < 0 || children[0] < minimumChild ||
-        children[1] < minimumChild ||
-        bestGain <= std::max(1e-8, totalError * 1e-4))
+    if (bestCluster < 0)
       break;
     for (size_t j = 0; j < bestMembers.size(); ++j)
       if (bestSide[j])
@@ -513,7 +486,10 @@ ComponentRecovery recoverComponents(const SpectralBasis &basis,
   for (int k = 0; k < m; ++k)
     eigenvalues[k] = std::max(0.0, double(basis.eigenvalues[size_t(k)]));
   const Eigen::MatrixXd diagonal = eigenvalues.asDiagonal();
-  constexpr double sparsity = 1.05, w0 = .3, w1 = .3, threshold = 1e-10;
+  // Frozen visual-basis recovery.  This is the simple constrained transform
+  // used by the first successful Eigen/Spectra photographic contact sheets.
+  // It deliberately does not optimize sparsity or component occupancy.
+  constexpr double sparsity = 1.0, w0 = .3, w1 = .3, threshold = 1e-10;
   for (int iteration = 0; iteration < 12; ++iteration) {
     Eigen::MatrixXd e0(n, count), e1(n, count);
     for (int p = 0; p < n; ++p)
@@ -557,23 +533,10 @@ ComponentRecovery recoverComponents(const SpectralBasis &basis,
   Eigen::MatrixXd projected(n, count);
   for (int p = 0; p < n; ++p)
     projected.row(p) = projectSimplex(segments.row(p).transpose()).transpose();
-  std::vector<int> retained;
-  for (int c = 0; c < count; ++c)
-    if (projected.col(c).sum() / n >= 0.0025)
-      retained.push_back(c);
-  if (retained.empty())
-    retained.push_back(0);
-  Eigen::MatrixXd compact(n, int(retained.size()));
-  for (size_t i = 0; i < retained.size(); ++i)
-    compact.col(int(i)) = projected.col(retained[i]);
-  for (int p = 0; p < n; ++p) {
-    double sum = compact.row(p).sum();
-    if (sum > 1e-12)
-      compact.row(p) /= sum;
-    else
-      compact(p, 0) = 1;
-  }
-  count = int(retained.size());
+  // Keep weak vocabulary entries.  The requested count is a capacity, but
+  // harmless weak functions are preferable to changing the validated basis.
+  // Downstream public grouping decides whether they carry useful plate mass.
+  Eigen::MatrixXd compact = std::move(projected);
   double projection = 0, effective = 0, entropy = 0;
   int hard = 0;
   diag.componentOccupancy.assign(count, 0);
@@ -884,18 +847,19 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       std::max(4, std::min(kPhase4PlateCapacity, params.plateCount));
   Phase4AutomaticResult result(source.y.bounds, params.latentCount,
                                params.plateCount);
-  AnalysisImage analysis = downsample(source),
-                spectralAnalysis = conditionSpectralAnalysis(analysis);
-  result.analysisGraph = buildGraph(spectralAnalysis, params, geometry);
+  // Frozen A1/A2 checkpoint: use the raw deterministic analysis image for the
+  // matting eigenspace.  The analysis graph still stores distinct signed
+  // W_CMF and non-negative F semantics for downstream support and spill.
+  AnalysisImage analysis = downsample(source);
+  result.analysisGraph = buildGraph(analysis, params, geometry);
   const int n = result.analysisGraph.nodeCount();
   std::vector<YabPixel> spectralInput;
-  spectralInput.reserve(spectralAnalysis.pixels.size());
-  for (const auto &value : spectralAnalysis.pixels)
+  spectralInput.reserve(analysis.pixels.size());
+  for (const auto &value : analysis.pixels)
     spectralInput.push_back({value.y, value.a, value.b});
   auto exactBasis = buildSpectralMattingBasis(
-      spectralInput, spectralAnalysis.width, spectralAnalysis.height,
-      std::min(32, params.latentCount + 8), execution, &result.analysisGraph,
-      0.002f);
+      spectralInput, analysis.width, analysis.height,
+      std::min(32, params.latentCount + 8), execution, nullptr, 0.0f);
   if (exactBasis.count < std::min(32, params.latentCount + 8))
     throw std::runtime_error("Phase 4 spectral eigensolver did not converge");
   SpectralBasis basis;
