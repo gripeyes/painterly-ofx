@@ -123,6 +123,12 @@ PlaneMap. Replace that Expression node with painted masks for artistic evaluatio
 Choose **Pictorial Planes (Phase 3.2)** under Comparison Mode; newly created nodes
 continue to default to Representative Mode until the isolation gate is approved.
 
+For Phase 3.3 choose **Soft Pictorial Plates (Phase 3.3)**. Automatic modes do not
+require PlaneMap. **Hybrid** uses PlaneMap as artist guidance, while **Manual** uses it
+as the complete ownership source. During the isolation test set Automatic Occupancy
+to 1, Veil Amount and Local Softness to 0, Transition Solver to Multigrid Reference,
+and Compute Backend to CPU Reference. Representative Mode remains the node default.
+
 These checks use the actual OFX plug-in. Passing core tests alone does not prove that
 Nuke discovered or rendered the bundle.
 

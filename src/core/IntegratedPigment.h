@@ -3,6 +3,8 @@
 #include "core/ColorSpace.h"
 #include "core/Execution.h"
 #include "core/PictorialPlanes.h"
+#include "core/PhotographicDecomposition.h"
+#include "core/SoftPictorialPlates.h"
 #include "core/Types.h"
 
 #include <cstdint>
@@ -14,7 +16,8 @@ enum class PigmentComparisonMode {
   GuidedDetailCollapse,
   WeightedMeanPigment,
   RepresentativeModePigment,
-  PictorialPlanes
+  PictorialPlanes,
+  SoftPictorialPlates
 };
 
 enum class PigmentDebugView {
@@ -62,10 +65,42 @@ enum class PigmentDebugView {
   PlanePreVeil,
   PlanePreSoftness,
   PlaneFitError,
-  PlaneDifferenceFromOriginal
+  PlaneDifferenceFromOriginal,
+  AutomaticRawMembership,
+  AutomaticNormalizedMembership,
+  AutomaticBaseMembership,
+  AutomaticPalette,
+  HybridCorrectionInfluence,
+  AutomaticConfidence,
+  AutomaticReconstructionError,
+  RgbxyControlMesh,
+  RgbxyVertexLayerWeights,
+  ReconstructedLayerComposite,
+  LayerCompositeDifference,
+  PhotographicStructure,
+  SmoothShading,
+  MediumDescriptiveResidual,
+  FineDescriptiveResidual,
+  ConditionalPlaneY,
+  ConditionalPlaneAB,
+  Phase33YReconstruction,
+  Phase33ABReconstruction,
+  Phase33PreVeil,
+  Phase33PreSoftness,
+  Phase33DifferenceFromOriginal,
+  TransitionSolverResidual
 };
 
 enum class PictorialDebugPlane { PlaneA = 0, PlaneB, PlaneC, PlaneD, Composite };
+enum class TransitionSolverMode { JacobiFast = 0, MultigridReference };
+enum class PigmentComputeBackend { Auto = 0, Metal, CpuReference };
+
+struct PigmentPhase33Params {
+  SoftPlateConstructionParams plates{};
+  PhotographicDecompositionParams decomposition{};
+  TransitionSolverMode transitionSolver = TransitionSolverMode::MultigridReference;
+  PigmentComputeBackend backend = PigmentComputeBackend::Auto;
+};
 
 struct IntegratedPigmentParams {
   float amount = 0.7f;
@@ -110,6 +145,7 @@ struct IntegratedPigmentParams {
   PigmentDebugView debugView = PigmentDebugView::Final;
   PictorialDebugPlane debugPlane = PictorialDebugPlane::Composite;
   PictorialPlanesParams pictorial{};
+  PigmentPhase33Params phase33{};
 };
 
 struct PigmentFieldValues {

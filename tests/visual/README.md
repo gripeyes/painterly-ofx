@@ -62,3 +62,11 @@ The procedural map validates the processing graph and diagnostics; it is not the
 artistic acceptance map. Replace it with four aligned Roto/RotoPaint masks before
 judging the cheek, shoulder, and knee isolation gate. See
 `docs/Phase3_2PictorialPlanes.md` for implementation and current visual status.
+
+## Soft Pictorial Plates Phase 3.3
+
+`PigmentPhase33Validation.nk` is the focused 1080p CPU-reference scene. Regenerate
+the automatic-plate and shading gate renders with `tests/nuke_phase33_gate.py`.
+The current result did not pass the artistic isolation gate; retain this scene for
+diagnosis rather than treating it as an approved preset. The implementation and
+failure analysis are in `docs/Phase3_3SoftPictorialPlates.md`.

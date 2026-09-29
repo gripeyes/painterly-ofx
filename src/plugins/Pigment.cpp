@@ -1,6 +1,7 @@
 #include "plugins/Pigment.h"
 
 #include "core/IntegratedPigment.h"
+#include "core/PigmentPhase33.h"
 #include "ofx/OfxImageHelpers.h"
 #include "ofx/ParameterHelpers.h"
 #include "ofxGPURender.h"
@@ -61,6 +62,19 @@ constexpr const char* kABTransitionWidth = "abTransitionWidth";
 constexpr const char* kTransitionStructureRespect = "transitionStructureRespect";
 constexpr const char* kLocalSoftness = "localSoftness";
 constexpr const char* kDebugPlane = "debugPlane";
+constexpr const char* kPlaneSource = "phase33PlaneSource";
+constexpr const char* kAutomaticOccupancy = "phase33AutomaticOccupancy";
+constexpr const char* kAutomaticPlaneStrength = "phase33AutomaticPlaneStrength";
+constexpr const char* kSpatialCoherence = "phase33SpatialCoherence";
+constexpr const char* kColorCoherence = "phase33ColorCoherence";
+constexpr const char* kHybridGuidance = "phase33HybridGuidance";
+constexpr const char* kShadingModel = "phase33ShadingModel";
+constexpr const char* kSmoothSimplification = "phase33SmoothSimplification";
+constexpr const char* kShadingStructurePreserve = "phase33ShadingStructurePreserve";
+constexpr const char* kChromaShadingRetention = "phase33ChromaShadingRetention";
+constexpr const char* kPhase33StructurePreserve = "phase33StructurePreserve";
+constexpr const char* kTransitionSolver = "phase33TransitionSolver";
+constexpr const char* kComputeBackend = "phase33ComputeBackend";
 constexpr std::array<const char*, 4> kPlaneEnable{
     "planeAEnable", "planeBEnable", "planeCEnable", "planeDEnable"};
 constexpr std::array<const char*, 4> kPlaneAmount{
@@ -120,6 +134,19 @@ class PigmentEffect final : public OFX::ImageEffect {
     abTransitionWidth_ = fetchDoubleParam(kABTransitionWidth);
     transitionStructureRespect_ = fetchDoubleParam(kTransitionStructureRespect);
     localSoftness_ = fetchDoubleParam(kLocalSoftness);
+    planeSource_ = fetchChoiceParam(kPlaneSource);
+    automaticOccupancy_ = fetchDoubleParam(kAutomaticOccupancy);
+    automaticPlaneStrength_ = fetchDoubleParam(kAutomaticPlaneStrength);
+    spatialCoherence_ = fetchDoubleParam(kSpatialCoherence);
+    colorCoherence_ = fetchDoubleParam(kColorCoherence);
+    hybridGuidance_ = fetchDoubleParam(kHybridGuidance);
+    shadingModel_ = fetchChoiceParam(kShadingModel);
+    smoothSimplification_ = fetchDoubleParam(kSmoothSimplification);
+    shadingStructurePreserve_ = fetchDoubleParam(kShadingStructurePreserve);
+    chromaShadingRetention_ = fetchDoubleParam(kChromaShadingRetention);
+    phase33StructurePreserve_ = fetchDoubleParam(kPhase33StructurePreserve);
+    transitionSolver_ = fetchChoiceParam(kTransitionSolver);
+    computeBackend_ = fetchChoiceParam(kComputeBackend);
     for (int i = 0; i < 4; ++i) {
       planeEnable_[i] = fetchBooleanParam(kPlaneEnable[i]);
       planeAmount_[i] = fetchDoubleParam(kPlaneAmount[i]);
@@ -161,6 +188,11 @@ class PigmentEffect final : public OFX::ImageEffect {
       *broadRetention_ = nullptr, *detailStructurePreserve_ = nullptr,
       *yTransitionWidth_ = nullptr, *abTransitionWidth_ = nullptr,
       *transitionStructureRespect_ = nullptr, *localSoftness_ = nullptr;
+  OFX::DoubleParam *automaticOccupancy_ = nullptr, *automaticPlaneStrength_ = nullptr,
+      *spatialCoherence_ = nullptr, *colorCoherence_ = nullptr,
+      *hybridGuidance_ = nullptr, *smoothSimplification_ = nullptr,
+      *shadingStructurePreserve_ = nullptr, *chromaShadingRetention_ = nullptr,
+      *phase33StructurePreserve_ = nullptr;
   std::array<OFX::BooleanParam*, 4> planeEnable_{};
   std::array<OFX::DoubleParam*, 4> planeAmount_{}, planeSourceMix_{}, planeYOffset_{},
       planeToneInfluence_{}, planeABias_{}, planeBBias_{}, planeChromaInfluence_{};
@@ -168,7 +200,8 @@ class PigmentEffect final : public OFX::ImageEffect {
   OFX::IntParam* veilSeed_ = nullptr;
   OFX::BooleanParam* invertMask_ = nullptr;
   OFX::ChoiceParam *gamut_ = nullptr, *comparison_ = nullptr, *debug_ = nullptr,
-      *debugPlane_ = nullptr;
+      *debugPlane_ = nullptr, *planeSource_ = nullptr, *shadingModel_ = nullptr,
+      *transitionSolver_ = nullptr, *computeBackend_ = nullptr;
 #ifdef PIGMENT_ENABLE_METAL
   std::unique_ptr<metal::MetalInstance> metal_;
 #endif
@@ -199,9 +232,9 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   gamut_->getValueAtTime(time, value);
   p.gamut = static_cast<WorkingGamut>(std::max(0, std::min(3, value)));
   comparison_->getValueAtTime(time, value);
-  p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(4, value)));
+  p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(5, value)));
   debug_->getValueAtTime(time, value);
-  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(44, value)));
+  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(67, value)));
   debugPlane_->getValueAtTime(time, value);
   p.debugPlane = static_cast<PictorialDebugPlane>(std::max(0, std::min(4, value)));
   p.pictorial.fineExtinction = static_cast<float>(fineExtinction_->getValueAtTime(time));
@@ -212,6 +245,26 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   p.pictorial.abTransitionWidth = static_cast<float>(abTransitionWidth_->getValueAtTime(time));
   p.pictorial.transitionStructureRespect = static_cast<float>(transitionStructureRespect_->getValueAtTime(time));
   p.pictorial.localSoftness = static_cast<float>(localSoftness_->getValueAtTime(time));
+  planeSource_->getValueAtTime(time, value);
+  p.phase33.plates.source = static_cast<PlaneSourceMode>(std::max(0, std::min(3, value)));
+  p.phase33.plates.automaticOccupancy = static_cast<float>(automaticOccupancy_->getValueAtTime(time));
+  p.phase33.plates.automaticPlaneStrength = static_cast<float>(automaticPlaneStrength_->getValueAtTime(time));
+  p.phase33.plates.spatialCoherence = static_cast<float>(spatialCoherence_->getValueAtTime(time));
+  p.phase33.plates.colorCoherence = static_cast<float>(colorCoherence_->getValueAtTime(time));
+  p.phase33.plates.hybridGuidance = static_cast<float>(hybridGuidance_->getValueAtTime(time));
+  shadingModel_->getValueAtTime(time, value);
+  p.phase33.decomposition.model = static_cast<PhotographicShadingModel>(std::max(0, std::min(2, value)));
+  p.phase33.decomposition.smoothSimplification = static_cast<float>(smoothSimplification_->getValueAtTime(time));
+  p.phase33.decomposition.shadingStructurePreserve = static_cast<float>(shadingStructurePreserve_->getValueAtTime(time));
+  p.phase33.decomposition.chromaShadingRetention = static_cast<float>(chromaShadingRetention_->getValueAtTime(time));
+  p.phase33.decomposition.fineExtinction = p.pictorial.fineExtinction;
+  p.phase33.decomposition.mediumExtinction = p.pictorial.mediumExtinction;
+  p.phase33.decomposition.detailStructurePreserve = p.pictorial.detailStructurePreserve;
+  p.phase33.decomposition.structurePreserve = static_cast<float>(phase33StructurePreserve_->getValueAtTime(time));
+  transitionSolver_->getValueAtTime(time, value);
+  p.phase33.transitionSolver = static_cast<TransitionSolverMode>(std::max(0, std::min(1, value)));
+  computeBackend_->getValueAtTime(time, value);
+  p.phase33.backend = static_cast<PigmentComputeBackend>(std::max(0, std::min(2, value)));
   MatrixOpponentTransform opponent(p.gamut);
   for (int i = 0; i < 4; ++i) {
     auto& plane = p.pictorial.planes[i];
@@ -236,6 +289,9 @@ bool PigmentEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*&
   const auto p = parameters(args.time);
   if (p.comparison == PigmentComparisonMode::Original ||
       (p.comparison == PigmentComparisonMode::PictorialPlanes &&
+       (!planeMap_ || !planeMap_->isConnected()) && p.debugView == PigmentDebugView::Final) ||
+      (p.comparison == PigmentComparisonMode::SoftPictorialPlates &&
+       p.phase33.plates.source == PlaneSourceMode::Manual &&
        (!planeMap_ || !planeMap_->isConnected()) && p.debugView == PigmentDebugView::Final) ||
       (p.debugView == PigmentDebugView::Final && (p.amount == 0.0f || p.mix == 0.0f))) {
     clip = source_; identityTime = args.time; return true;
@@ -289,6 +345,36 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
   }
   auto p = parameters(args.time);
   p.premultiplied = source->getPreMultiplication() == OFX::eImagePreMultiplied;
+  if (p.comparison == PigmentComparisonMode::SoftPictorialPlates) {
+    if (args.isEnabledMetalRender)
+      OFX::throwSuiteStatusException(kOfxStatGPURenderFailed);
+    if (p.phase33.backend == PigmentComputeBackend::Metal) {
+      setPersistentMessage(OFX::Message::eMessageError, "PigmentPhase33Metal",
+                           "Phase 3.3 Metal is not available for this build; choose Auto or CPU Reference.");
+      OFX::throwSuiteStatusException(kOfxStatErrUnsupported);
+    }
+    const auto sourceBounds = ofx::toRect(source->getBounds());
+    const auto destinationBounds = ofx::toRect(destination->getBounds());
+    ConstImageView sourceView{static_cast<const float*>(source->getPixelData()),
+        source->getRowBytes() / static_cast<int>(sizeof(float)), sourceBounds,
+        source->getPixelComponentCount()};
+    ImageView destinationView{static_cast<float*>(destination->getPixelData()),
+        destination->getRowBytes() / static_cast<int>(sizeof(float)), destinationBounds,
+        destination->getPixelComponentCount()};
+    ConstImageView maskView{}, mapView{};
+    if (maskImage) maskView = {static_cast<const float*>(maskImage->getPixelData()),
+        maskImage->getRowBytes() / static_cast<int>(sizeof(float)), ofx::toRect(maskImage->getBounds()),
+        maskImage->getPixelComponentCount()};
+    if (planeMapImage) mapView = {static_cast<const float*>(planeMapImage->getPixelData()),
+        planeMapImage->getRowBytes() / static_cast<int>(sizeof(float)), ofx::toRect(planeMapImage->getBounds()),
+        planeMapImage->getPixelComponentCount()};
+    Phase33RenderInputs cpu{sourceView, destinationView, ofx::toRect(args.renderWindow), p,
+        {source->getPixelAspectRatio(), args.renderScale.x, args.renderScale.y},
+        maskImage ? &maskView : nullptr, planeMapImage ? &mapView : nullptr};
+    processPigmentPhase33(cpu, { [this] { return abort(); }, serialRows, nullptr });
+    clearPersistentMessage();
+    return;
+  }
 #ifdef PIGMENT_ENABLE_METAL
   if (!metal_) metal_ = std::make_unique<metal::MetalInstance>();
   const auto makeView = [](OFX::Image& image) {
@@ -474,6 +560,55 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
          "Optional downstream optical softness; zero fully bypasses it",
          OFX::eDoubleTypeScale);
 
+  auto* phase33 = group(d, "phase33Group", "Soft Pictorial Plates (Phase 3.3)", false);
+  auto* construction = group(d, "phase33ConstructionGroup", "Plane Construction", false);
+  construction->setParent(*phase33);
+  auto* planeSource = d.defineChoiceParam(kPlaneSource);
+  planeSource->setLabels("Plane Source", "Plane Source", "Plane Source");
+  planeSource->setScriptName(kPlaneSource); planeSource->appendOption("Manual");
+  planeSource->appendOption("Auto Convex Palette");
+  planeSource->appendOption("Auto Spatial Layers"); planeSource->appendOption("Hybrid");
+  planeSource->setDefault(1); planeSource->setParent(*construction);
+  number(d, *construction, kAutomaticOccupancy, "Automatic Occupancy", 1, 0, 1, 1,
+         "Explicit automatic plane coverage; confidence never changes it", OFX::eDoubleTypeScale);
+  number(d, *construction, kAutomaticPlaneStrength, "Automatic Plane Strength", 1, 0, 1, 1,
+         "Processing influence of automatic ownership", OFX::eDoubleTypeScale);
+  number(d, *construction, kSpatialCoherence, "Spatial Coherence", 0.5, 0, 1, 1,
+         "Spatial coherence or RGBXY mesh scale", OFX::eDoubleTypeScale);
+  number(d, *construction, kColorCoherence, "Color Coherence", 0.5, 0, 1, 1,
+         "Compactness of convex palette contributions", OFX::eDoubleTypeScale);
+  number(d, *construction, kHybridGuidance, "Hybrid Guidance Amount", 0.75, 0, 1, 1,
+         "Influence and strong-paint locking of the RGBA Plane Map", OFX::eDoubleTypeScale);
+
+  auto* shading = group(d, "phase33ShadingGroup", "Photographic Shading", false);
+  shading->setParent(*phase33);
+  auto* shadingModel = d.defineChoiceParam(kShadingModel);
+  shadingModel->setLabels("Shading Model", "Shading Model", "Shading Model");
+  shadingModel->setScriptName(kShadingModel); shadingModel->appendOption("Quadratic (Phase 3.2)");
+  shadingModel->appendOption("Source Smooth"); shadingModel->appendOption("TGV Regularized");
+  shadingModel->setDefault(1); shadingModel->setParent(*shading);
+  number(d, *shading, kSmoothSimplification, "Smooth Simplification", 0.55, 0, 1, 1,
+         "Regularization of source-derived smooth photographic shading", OFX::eDoubleTypeScale);
+  number(d, *shading, kShadingStructurePreserve, "Shading Structure Preserve", 0.8, 0, 1, 1,
+         "Protect scale-persistent geometry during shading regularization", OFX::eDoubleTypeScale);
+  number(d, *shading, kChromaShadingRetention, "Chroma Shading Retention", 0.65, 0, 1, 1,
+         "Retain conditional broad chroma variation within each plate", OFX::eDoubleTypeScale);
+  number(d, *shading, kPhase33StructurePreserve, "Structure Preserve", 0.9, 0, 1, 1,
+         "Survival of spatially fixed structural residuals", OFX::eDoubleTypeScale);
+
+  auto* solver = group(d, "phase33SolverGroup", "Phase 3.3 Solver", false);
+  solver->setParent(*phase33);
+  auto* transitionSolver = d.defineChoiceParam(kTransitionSolver);
+  transitionSolver->setLabels("Transition Solver", "Transition Solver", "Transition Solver");
+  transitionSolver->setScriptName(kTransitionSolver); transitionSolver->appendOption("Jacobi Fast");
+  transitionSolver->appendOption("Multigrid Reference"); transitionSolver->setDefault(1);
+  transitionSolver->setParent(*solver);
+  auto* backend = d.defineChoiceParam(kComputeBackend);
+  backend->setLabels("Compute Backend", "Compute Backend", "Compute Backend");
+  backend->setScriptName(kComputeBackend); backend->appendOption("Auto");
+  backend->appendOption("Metal"); backend->appendOption("CPU Reference");
+  backend->setDefault(0); backend->setParent(*solver);
+
   auto* advanced = group(d, "advancedGroup", "Research Advanced", false);
   number(d, *advanced, kRegionSoftness, "Region Softness", 0.5, 0.1, 4, 2, "Tail softness of joint spatial/color attraction");
   number(d, *advanced, kModeSelectivity, "Mode Selectivity", 0.65, 0, 1, 1,
@@ -494,6 +629,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   comparison->appendOption("Weighted Mean (legacy research)");
   comparison->appendOption("Representative Mode");
   comparison->appendOption("Pictorial Planes (Phase 3.2)");
+  comparison->appendOption("Soft Pictorial Plates (Phase 3.3)");
   comparison->setDefault(3); comparison->setParent(*advanced);
   auto* debug = d.defineChoiceParam(kDebug); debug->setLabels("Debug View", "Debug View", "Debug View");
   debug->setScriptName(kDebug);
@@ -511,6 +647,16 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
       "Broad Component", "Fine Residual", "Medium Residual", "Extinction Amount",
       "Structure / Protection", "Pre-Veil Result", "Pre-Softness Result", "Fit Error",
       "Plane Difference From Original"})
+    debug->appendOption(option);
+  for (const char* option : {"Automatic Raw Membership", "Automatic Normalized Membership",
+      "Automatic Base / Unassigned", "Automatic Palette", "Hybrid Correction Influence",
+      "Automatic Confidence", "Automatic Reconstruction Error", "RGBXY Control Mesh",
+      "RGBXY Vertex-to-Layer Weights", "Reconstructed Layer Composite",
+      "Layer Composite Difference", "Structural Component", "Smooth Shading",
+      "Medium Descriptive Residual", "Fine Descriptive Residual", "Conditional Plane Y",
+      "Conditional Plane AB", "Phase 3.3 Y Reconstruction", "Phase 3.3 AB Reconstruction",
+      "Phase 3.3 Pre-Veil", "Phase 3.3 Pre-Softness",
+      "Phase 3.3 Difference From Original", "Transition Solver Residual"})
     debug->appendOption(option);
   debug->setDefault(0); debug->setParent(*advanced);
   auto* debugPlane = d.defineChoiceParam(kDebugPlane);

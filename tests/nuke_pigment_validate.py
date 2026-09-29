@@ -29,6 +29,12 @@ required = {
     "debugView", "mix", "debugPlane", "fineExtinction", "mediumExtinction",
     "broadRetention", "detailStructurePreserve", "yTransitionWidth",
     "abTransitionWidth", "transitionStructureRespect", "localSoftness",
+    "phase33PlaneSource", "phase33AutomaticOccupancy",
+    "phase33AutomaticPlaneStrength", "phase33SpatialCoherence",
+    "phase33ColorCoherence", "phase33HybridGuidance", "phase33ShadingModel",
+    "phase33SmoothSimplification", "phase33ShadingStructurePreserve",
+    "phase33ChromaShadingRetention", "phase33StructurePreserve",
+    "phase33TransitionSolver", "phase33ComputeBackend",
     "planeAEnable", "planeAAmount", "planeASourceMix", "planeAManualTarget",
     "planeAToneInfluence", "planeAChromaInfluence",
 }
@@ -86,6 +92,22 @@ for knob, value in {
 }.items():
     node[knob].setValue(value)
 for knob, value in {
+    "phase33PlaneSource": 1,
+    "phase33AutomaticOccupancy": 1.0,
+    "phase33AutomaticPlaneStrength": 1.0,
+    "phase33SpatialCoherence": 0.5,
+    "phase33ColorCoherence": 0.5,
+    "phase33HybridGuidance": 0.75,
+    "phase33ShadingModel": 1,
+    "phase33SmoothSimplification": 0.55,
+    "phase33ShadingStructurePreserve": 0.8,
+    "phase33ChromaShadingRetention": 0.65,
+    "phase33StructurePreserve": 0.9,
+    "phase33TransitionSolver": 1,
+    "phase33ComputeBackend": 2,
+}.items():
+    node[knob].setValue(value)
+for knob, value in {
     "fineExtinction": 0.9,
     "mediumExtinction": 0.8,
     "broadRetention": 0.2,
@@ -112,7 +134,7 @@ for label, filename in plates.items():
     node.setInput(plane_input, plane_map)
     for comparison, suffix in ((0, "original"), (1, "guided"),
                                (2, "weighted-mean"), (3, "representative-mode"),
-                               (4, "pictorial-planes")):
+                               (4, "pictorial-planes"), (5, "soft-pictorial-plates")):
         node["comparisonMode"].setValue(comparison)
         node["debugView"].setValue(0)
         timings.append(render_png(node, label + "-" + suffix + ".png"))
@@ -140,6 +162,18 @@ for label, filename in plates.items():
             37: "fine-residual", 38: "medium-residual", 39: "extinction",
             40: "structure-protection", 41: "pre-veil", 42: "pre-softness",
             43: "fit-error", 44: "plane-difference",
+        }.items():
+            node["debugView"].setValue(value)
+            timings.append(render_png(node, label + "-" + suffix + ".png"))
+        node["comparisonMode"].setValue(5)
+        for value, suffix in {
+            45: "auto-raw-membership", 46: "auto-membership",
+            47: "auto-base", 48: "auto-palette", 50: "auto-confidence",
+            51: "auto-reconstruction-error", 56: "photographic-structure",
+            57: "smooth-shading", 58: "medium-description",
+            59: "fine-description", 60: "conditional-y", 61: "conditional-ab",
+            62: "phase33-y", 63: "phase33-ab", 64: "phase33-pre-veil",
+            65: "phase33-pre-softness", 66: "phase33-difference",
         }.items():
             node["debugView"].setValue(value)
             timings.append(render_png(node, label + "-" + suffix + ".png"))

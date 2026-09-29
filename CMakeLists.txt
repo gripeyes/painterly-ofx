@@ -30,6 +30,10 @@ add_library(pigment_core STATIC
   src/core/AcceleratedYabMass.cpp
   src/core/IntegratedPigment.cpp
   src/core/PictorialPlanes.cpp
+  src/core/SoftPictorialPlates.cpp
+  src/core/ScreenedMultigrid.cpp
+  src/core/PhotographicDecomposition.cpp
+  src/core/PigmentPhase33.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)
@@ -101,6 +105,10 @@ if(BUILD_TESTING)
   add_executable(pigment_pictorial_planes_tests tests/PictorialPlanesTests.cpp)
   target_link_libraries(pigment_pictorial_planes_tests PRIVATE pigment_core)
   add_test(NAME pigment_pictorial_planes_tests COMMAND pigment_pictorial_planes_tests)
+
+  add_executable(pigment_phase33_core_tests tests/PigmentPhase33CoreTests.cpp)
+  target_link_libraries(pigment_phase33_core_tests PRIVATE pigment_core)
+  add_test(NAME pigment_phase33_core_tests COMMAND pigment_phase33_core_tests)
 
   add_executable(pigment_backend_benchmark tests/BackendBenchmark.cpp)
   target_link_libraries(pigment_backend_benchmark PRIVATE pigment_core)
