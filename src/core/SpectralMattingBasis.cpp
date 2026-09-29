@@ -78,7 +78,10 @@ SparseSymmetricMatrix buildMattingLaplacian(const std::vector<YabPixel>& image,
                           image[index].b / scale[2]};
   }
   // The reference formulation adds epsilon / |window| to the covariance.
-  constexpr double regularization = 1.0e-7 / 9.0;
+  // Robust-normalized YAB has a much smaller noise floor than display RGB;
+  // this conditioning term prevents 8-bit/JPEG block noise from becoming a
+  // near-null matte mode without smoothing either the image or the mattes.
+  constexpr double regularization = 1.0e-5 / 9.0;
   if (width < 3 || height < 3) {
     SparseSymmetricMatrix identity; identity.size = count;
     identity.offsets.resize(static_cast<size_t>(count) + 1);
@@ -153,15 +156,11 @@ SparseSymmetricMatrix addInformationFlow(const SparseSymmetricMatrix& matte,
       rows[row][matte.columns[edge]] += matte.values[edge];
   std::vector<std::pair<int,double>> stencil;
   for (int p = 0; p < matte.size; ++p) {
-    double total = 0.0;
-    for (int edge = graph.rowOffsets[p]; edge < graph.rowOffsets[p+1]; ++edge)
-      total += std::max(0.0f, graph.edges[edge].weight);
     stencil.clear(); stencil.emplace_back(p,1.0);
-    if (total > 1.0e-12) {
-      for (int edge = graph.rowOffsets[p]; edge < graph.rowOffsets[p+1]; ++edge) {
-        const auto& value = graph.edges[edge];
-        stencil.emplace_back(value.target,-std::max(0.0f,value.weight)/total);
-      }
+    for (int edge = graph.rowOffsets[p]; edge < graph.rowOffsets[p+1]; ++edge) {
+      const auto& value = graph.edges[edge];
+      if(std::abs(value.signedMixtureWeight)>1.0e-12f)
+        stencil.emplace_back(value.target,-value.signedMixtureWeight);
     }
     for (const auto& lhs : stencil) for (const auto& rhs : stencil)
       rows[lhs.first][rhs.first] += strength * lhs.second * rhs.second;
@@ -321,7 +320,7 @@ SpectralMattingBasis smallestEigenvectors(const SparseSymmetricMatrix& matrix, i
   Spectra::SymEigsShiftSolver<ShiftOperation> solver(shiftOperation,wanted,krylov,-1.0e-7);
   Eigen::VectorXd initial(n);for(int i=0;i<n;++i){uint32_t hash=uint32_t(i+1)*0x9e3779b9u;hash^=hash>>16;initial[i]=double(int(hash&0xffffu)-32768)/32768.0;}
   solver.init(initial.data());
-  solver.compute(Spectra::SortRule::LargestMagn,1000,1.0e-10,Spectra::SortRule::SmallestAlge);
+  solver.compute(Spectra::SortRule::LargestMagn,1400,1.0e-12,Spectra::SortRule::SmallestAlge);
   if(execution.cancelled()||solver.info()!=Spectra::CompInfo::Successful)return {};
   const Eigen::VectorXd eigenvalues=solver.eigenvalues();const Eigen::MatrixXd eigenvectors=solver.eigenvectors();
   SpectralMattingBasis result;result.width=width;result.height=height;result.count=int(eigenvalues.size());result.values.resize(size_t(n)*result.count);result.eigenvalues.resize(result.count);result.residuals.resize(result.count);std::vector<double>product(n);

@@ -43,6 +43,7 @@ struct Phase4Params {
   int plateCount = 6;
   float plateScale = 48.0f;
   float plateOverlap = 0.55f;
+  float chromaSupportRatio = 2.0f;
   float boundaryLock = 0.75f;
   float lumaChromaCoupling = 0.35f;
   float lumaChunkScale = 24.0f;
@@ -64,6 +65,9 @@ struct Phase4Params {
 
 struct SparseAffinityEdge {
   int target = 0;
+  // Signed affine reconstruction coefficient used only by W_CMF.
+  float signedMixtureWeight = 0.0f;
+  // Nonnegative transport capacity F in [0,1].
   float weight = 0.0f;
   float physicalDistance = 1.0f;
   float boundary = 0.0f;
@@ -77,16 +81,23 @@ struct SparseAffinityGraph {
 };
 
 struct Phase4GateDiagnostics {
+  int requestedLatentCount = 0;
+  int activeLatentCount = 0;
   float maximumEigenResidual = 0.0f;
   float meanEigenResidual = 0.0f;
   float maximumEigenmodeCorrelation = 0.0f;
   float componentProjectionError = 0.0f;
   float appearanceUnmixingError = 0.0f;
   float meanEffectiveComponents = 0.0f;
+  float meanComponentEntropy = 0.0f;
+  float componentEffectiveRank = 0.0f;
   float hardPixelFraction = 0.0f;
   bool eigenspaceFinite = true;
   bool componentsFinite = true;
   bool appearanceFinite = true;
+  std::vector<float> componentOccupancy;
+  std::vector<float> componentCorrelation;
+  std::vector<float> componentMattingEnergy;
 };
 
 class LatentComponentSet {

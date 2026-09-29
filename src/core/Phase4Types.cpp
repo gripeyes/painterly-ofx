@@ -45,9 +45,7 @@ float phase4SupportRadiusY(const Phase4Params& params) noexcept {
 float phase4SupportRadiusAB(const Phase4Params& params) noexcept {
   const float base = phase4SupportRadiusY(params);
   if (base == 0.0f) return 0.0f;
-  const float luma = std::max(1.0e-6f, params.lumaChunkScale);
-  const float chroma = std::max(1.0e-6f, params.chromaChunkScale);
-  const float ratio = std::max(0.25f, std::min(4.0f, std::sqrt(chroma / luma)));
+  const float ratio = std::max(0.25f, std::min(4.0f, params.chromaSupportRatio));
   const float coupling = std::max(0.0f, std::min(1.0f, params.lumaChromaCoupling));
   return base * (coupling + (1.0f - coupling) * ratio);
 }
