@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 
-def contact(paths, target, columns=3):
+def contact(paths, target, columns=3, labels=None):
     images=[Image.open(p).convert('RGB') for p in paths]
     if not images:
         return
@@ -17,7 +17,7 @@ def contact(paths, target, columns=3):
     draw=ImageDraw.Draw(sheet)
     for n,(path,image) in enumerate(zip(paths,images)):
         x,y=(n%columns)*w,(n//columns)*(h+20)
-        draw.text((x+3,y+3),path.stem,fill='white')
+        draw.text((x+3,y+3),labels[n] if labels else path.stem,fill='white')
         image.thumbnail((w,h))
         sheet.paste(image,(x,y+20))
     sheet.save(target)
@@ -49,7 +49,7 @@ if __name__=='__main__':
     for pattern,name in [('plate-?-broad-y-influence.pgm','broad-y-influence'),
                          ('plate-?-broad-ab-influence.pgm','broad-ab-influence')]:
         contact(sorted(args.input.glob(pattern)),args.output/(name+'.png'))
-    for name in ['gate-a-reconstruction','synthesized-composite','pre-spill','post-spill','no-interior','mean-only']:
+    for name in ['gate-a-reconstruction','synthesized-composite','pre-spill','post-spill','no-interior','mean-only','first-only']:
         path=args.input/(name+'.ppm')
         if path.exists():
             Image.open(path).save(args.output/(name+'.png'))
@@ -61,11 +61,20 @@ if __name__=='__main__':
             ['gate-a-reconstruction','mean-only','synthesized-composite']]
     if all(p.exists() for p in paired):
         contact(paired,args.output/'first-moment-comparison.png')
+    paired=[args.input/(name+'.ppm') for name in
+            ['gate-a-reconstruction','first-only','synthesized-composite']]
+    if all(p.exists() for p in paired):
+        contact(paired,args.output/'second-moment-comparison.png')
     difference=args.input/'interior-difference.png'
     if difference.exists():
         Image.open(difference).save(args.output/difference.name)
     for path in args.input.glob('*-y-direction-error-*.png'):
         Image.open(path).save(args.output/path.name)
+    ablation=([args.input/'gate-a-reconstruction.ppm',args.input/'synthesized-composite.ppm']+
+              [args.input/f'barrier-{cut}/synthesized-composite.ppm' for cut in [25,50,75]])
+    if all(p.exists() for p in ablation):
+        contact(ablation,args.output/'barrier-ablation-comparison.png',labels=
+                ['Original','Second, fixed barriers','Remove cue <= 0.25','Remove cue <= 0.50','Remove cue <= 0.75'])
     for name in ['gate-a.csv','poisson.csv','hierarchy.csv',
                  'component-occupancy.csv','component-correlation.csv']:
         path=args.input/name

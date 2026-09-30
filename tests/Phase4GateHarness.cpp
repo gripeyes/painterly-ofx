@@ -3,6 +3,7 @@
 #include "core/LatentPlateGraph.h"
 #include "core/PlateSpill.h"
 #include "core/RegionHierarchy.h"
+#include "Phase4BarrierAblation.h"
 
 #include <algorithm>
 #include <array>
@@ -393,9 +394,14 @@ int main(int argc, char **argv) {
     pigment::Phase4BroadFormOptions broadForm;
     const auto experiment=std::string(argv[argc-1]);
     const bool firstExperiment=experiment=="--first-moment-experiment";
-    broadForm.enabled=experiment=="--interior-experiment" || experiment=="--interior-strong" || firstExperiment;
-    if(firstExperiment) {
+    const bool ablationExperiment=experiment=="--barrier-ablation";
+    const bool secondExperiment=experiment=="--second-moment-experiment" || ablationExperiment;
+    broadForm.enabled=experiment=="--interior-experiment" || experiment=="--interior-strong" || firstExperiment || secondExperiment;
+    if(firstExperiment || secondExperiment) {
       broadForm.firstStrengthY=20; broadForm.firstStrengthAB=2.5;
+    }
+    if(secondExperiment) {
+      broadForm.secondStrengthY=20; broadForm.secondStrengthAB=1.25;
     }
     if(experiment=="--interior-strong") {
       broadForm.strengthY*=4; broadForm.strengthAB*=4;
@@ -403,9 +409,10 @@ int main(int argc, char **argv) {
     if(std::string(argv[argc-1])=="--no-interior") broadForm.enabled=false;
     if(broadForm.enabled) {
       auto baselineOptions=broadForm;
-      baselineOptions.enabled=firstExperiment;
-      baselineOptions.firstStrengthY=baselineOptions.firstStrengthAB=0;
-      const std::string baselineName=firstExperiment?"mean-only":"no-interior";
+      baselineOptions.enabled=firstExperiment || secondExperiment;
+      if(!secondExperiment) baselineOptions.firstStrengthY=baselineOptions.firstStrengthAB=0;
+      baselineOptions.secondStrengthY=baselineOptions.secondStrengthAB=0;
+      const std::string baselineName=secondExperiment?"first-only":firstExperiment?"mean-only":"no-interior";
       auto baseline=pigment::synthesizePhase4Chunks(
           static_cast<const pigment::OwnedYabPlanes &>(yab).view(),
           constant.plates,hierarchy,params,{},baselineOptions);
@@ -424,7 +431,7 @@ int main(int argc, char **argv) {
     writeYabPfm(outputDir / "synthesized-yab.pfm",
                 static_cast<const pigment::OwnedYabPlanes &>(synthesis.preSpill).view());
     std::ofstream poisson(outputDir / "poisson.csv");
-    poisson << "plate,channel,iterations,relative_residual,converged,broad_constraints,broad_result_rmse,first_constraints,first_result_rmse\n";
+    poisson << "plate,channel,iterations,relative_residual,converged,broad_constraints,broad_result_rmse,first_constraints,first_result_rmse,second_constraints,second_result_rmse\n";
     bool converged = true;
     for (size_t i = 0; i < synthesis.solver.size(); ++i)
       for (int channel = 0; channel < 3; ++channel) {
@@ -432,7 +439,8 @@ int main(int argc, char **argv) {
         poisson << i << ',' << channel << ',' << s.iterations << ','
                 << s.relativeResidual << ',' << s.converged << ','
                 << s.broadConstraints << ',' << s.broadResultRmse << ','
-                << s.firstConstraints << ',' << s.firstResultRmse << '\n';
+                << s.firstConstraints << ',' << s.firstResultRmse << ','
+                << s.secondConstraints << ',' << s.secondResultRmse << '\n';
         converged &= s.converged;
       }
     poisson.close();
@@ -465,6 +473,52 @@ int main(int argc, char **argv) {
       std::cerr << "Gate C blocked: bounded Poisson residual exceeds 1e-5; diagnostics="
                 << outputDir << '\n';
       return 3;
+    }
+    if(ablationExperiment) {
+      if(params.spillAmount!=0) throw std::runtime_error("Barrier diagnostic requires Spill zero");
+      std::ofstream stats(outputDir/"barrier-ablation.csv");
+      stats<<"threshold,plate,y_chunks,ab_chunks,y_locked_pixels,ab_locked_pixels,locked_value_errors,max_solver_residual\n";
+      for(float threshold:{.25f,.50f,.75f}) {
+        auto altered=diagnosticBarrierAblation(hierarchy,threshold);
+        auto directory=outputDir/("barrier-"+std::to_string(int(threshold*100)));
+        std::filesystem::create_directories(directory);
+        auto candidate=pigment::synthesizePhase4Chunks(
+            static_cast<const pigment::OwnedYabPlanes &>(yab).view(),constant.plates,altered,params,{},broadForm);
+        writeYabPfm(directory/"source-yab.pfm",static_cast<const pigment::OwnedYabPlanes &>(yab).view());
+        writeYabPfm(directory/"barrier-baseline-yab.pfm",static_cast<const pigment::OwnedYabPlanes &>(synthesis.preSpill).view());
+        writeYabPfm(directory/"synthesized-yab.pfm",static_cast<const pigment::OwnedYabPlanes &>(candidate.preSpill).view());
+        writeAppearance(directory/"synthesized-composite.ppm",static_cast<const pigment::OwnedYabPlanes &>(candidate.preSpill).view(),
+                        static_cast<const pigment::OwnedPlane &>(fullAlpha).view(),transform);
+        for(int i=0;i<constant.plates.count();++i) {
+          const auto &h=altered.plates[size_t(i)];
+          std::string prefix=std::string("plate-")+char('A'+i);
+          writeLabels(directory/(prefix+"-y-chunks.ppm"),h.yChunk,bounds);
+          writeLabels(directory/(prefix+"-ab-chunks.ppm"),h.abChunk,bounds);
+          writePgm(directory/(prefix+"-y-retained.pgm"),h.yRetainedBoundaries.view());
+          writePgm(directory/(prefix+"-ab-retained.pgm"),h.abRetainedBoundaries.view());
+          auto out=static_cast<const pigment::OwnedYabPlanes &>(candidate.plateAppearance[size_t(i)]).view();
+          writeYabPfm(directory/(prefix+"-synthesized-yab.pfm"),out);
+          const auto automatic=constant.plates.appearance(i);
+          size_t lockedY=0,lockedAB=0,errors=0;
+          for(int y=bounds.y1;y<bounds.y2;++y) for(int x=bounds.x1;x<bounds.x2;++x) {
+            if(h.yRetainedBoundaries.view().at(x,y)>0) {
+              ++lockedY;errors+=out.y.at(x,y)!=automatic.y.at(x,y);
+            }
+            if(h.abRetainedBoundaries.view().at(x,y)>0) {
+              ++lockedAB;errors+=out.a.at(x,y)!=automatic.a.at(x,y) || out.b.at(x,y)!=automatic.b.at(x,y);
+            }
+          }
+          double residual=0;
+          for(const auto &s:candidate.solver[size_t(i)]) {
+            residual=std::max(residual,s.relativeResidual);
+            if(!s.converged) throw std::runtime_error("Ablation Poisson solve did not converge");
+          }
+          stats<<threshold<<','<<i<<','<<h.yChunkCount<<','<<h.abChunkCount<<','<<lockedY<<','<<lockedAB<<','<<errors<<','<<residual<<'\n';
+          if(errors) throw std::runtime_error("Ablation moved a protected contour value");
+        }
+      }
+      std::cout<<"PHASE4_BARRIER_ABLATION output="<<outputDir<<'\n';
+      return 0;
     }
     auto preSpillParams = params;
     preSpillParams.spillAmount = 0.0f;

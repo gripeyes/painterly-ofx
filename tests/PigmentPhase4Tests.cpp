@@ -3,6 +3,7 @@
 #include "core/PigmentPhase4.h"
 #include "core/PlateSpill.h"
 #include "core/RegionHierarchy.h"
+#include "Phase4BarrierAblation.h"
 
 #include <cmath>
 #include <iostream>
@@ -431,6 +432,29 @@ void interiorBroadForm() {
     check(d.a.at(x,y)==0 && d.b.at(x,y)==0,"first moments preserve neutral chroma");
   }
   check(firstDirectionError<meanDirectionError,"first moments improve broad long-chord direction fixture");
+  auto second=first;second.secondStrengthY=20;second.secondStrengthAB=1.25;
+  auto curved=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},second);
+  auto q=static_cast<const pigment::OwnedYabPlanes &>(curved.plateAppearance[0]).view();
+  check(curved.solver[0][0].secondConstraints>0 && curved.solver[0][0].converged,
+        "supported second-order statistics participate in bounded solve");
+  double firstCurvatureError=0,secondCurvatureError=0;
+  for(int y=24;y<72;++y) for(int x=24;x<72;++x) {
+    double target=form[size_t(y)*96+x+8]-2*form[size_t(y)*96+x]+form[size_t(y)*96+x-8];
+    firstCurvatureError+=std::pow(d.y.at(x+8,y)-2*d.y.at(x,y)+d.y.at(x-8,y)-target,2);
+    secondCurvatureError+=std::pow(q.y.at(x+8,y)-2*q.y.at(x,y)+q.y.at(x-8,y)-target,2);
+  }
+  check(secondCurvatureError<firstCurvatureError,"second moments improve broad curvature fixture without a replacement field");
+  auto secondAgain=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},second);
+  auto qa=static_cast<const pigment::OwnedYabPlanes &>(secondAgain.plateAppearance[0]).view();
+  auto secondY=second;secondY.secondStrengthY*=2;
+  auto secondIndependent=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},secondY);
+  auto qi=static_cast<const pigment::OwnedYabPlanes &>(secondIndependent.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x) {
+    check(q.y.at(x,y)==qa.y.at(x,y) && std::isfinite(q.y.at(x,y)),"second-order solve is finite and deterministic");
+    check(q.a.at(x,y)==qi.a.at(x,y) && q.b.at(x,y)==qi.b.at(x,y),"Y curvature strength leaves AB unchanged");
+    if(x==0 || y==0 || x==95 || y==95)
+      check(q.y.at(x,y)==source.y.at(x,y),"second-order moments leave retained contours exact");
+  }
   auto firstRepeat=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},first);
   auto dr=static_cast<const pigment::OwnedYabPlanes &>(firstRepeat.plateAppearance[0]).view();
   auto changedFirst=first;changedFirst.firstStrengthY*=2;
@@ -445,10 +469,39 @@ void interiorBroadForm() {
       check(d.y.at(x,y)==source.y.at(x,y),"first moments do not change retained contour values");
   }
   params.lumaChunkScale=0;params.chromaChunkScale=0;
-  auto bypass=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},first);
+  auto bypass=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},second);
   auto untouched=static_cast<const pigment::OwnedYabPlanes &>(bypass.plateAppearance[0]).view();
   for(int y=0;y<96;++y) for(int x=0;x<96;++x)
     check(untouched.y.at(x,y)==source.y.at(x,y),"zero chunk scale bypasses interior constraints exactly");
+}
+
+void barrierAblationSemantics() {
+  pigment::RectI bounds{0,0,32,32};
+  pigment::OwnedYabPlanes source(bounds);
+  pigment::PublicPlateSet plates(bounds,4);
+  pigment::Phase4RegionHierarchy h;h.bounds=bounds;h.boundaryStrength=pigment::OwnedPlane(bounds,.1f);
+  h.boundaryStrength.view().at(15,16)=.9f;
+  for(int i=0;i<4;++i) {
+    h.plates.emplace_back(bounds);auto &p=h.plates.back();p.yChunkCount=p.abChunkCount=2;
+    p.yChunk.resize(1024);p.abChunk.resize(1024);
+    p.yEdgeX.assign(1024,0);p.yEdgeY.assign(1024,0);p.abEdgeX.assign(1024,0);p.abEdgeY.assign(1024,0);
+    for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
+      int index=y*32+x;p.yChunk[size_t(index)]=p.abChunk[size_t(index)]=x>=16;
+      if(x==15) p.yEdgeX[size_t(index)]=p.abEdgeX[size_t(index)]=100;
+      auto a=plates.appearance(i);a.y.at(x,y)=.01f*x+.02f*y+float((x+y)%2)*.01f;
+      a.a.at(x,y)=a.b.at(x,y)=0;
+      plates.alpha(i).at(x,y)=.25f;plates.supportY(i).at(x,y)=plates.supportAB(i).at(x,y)=1;
+    }
+  }
+  auto cut=diagnosticBarrierAblation(h,.5f);
+  check(h.plates[0].yChunkCount==2 && cut.plates[0].yChunkCount==1,"diagnostic ablation changes a copy only");
+  check(std::isinf(cut.plates[0].yEdgeX[16*32+15]),"strong contour remains explicit barrier after domains connect around it");
+  pigment::Phase4Params params;params.gradientComplexity=.1f;
+  auto solve=pigment::synthesizePhase4Chunks(static_cast<const pigment::OwnedYabPlanes &>(source).view(),plates,cut,params);
+  auto output=static_cast<const pigment::OwnedYabPlanes &>(solve.plateAppearance[0]).view();
+  auto automatic=static_cast<const pigment::PublicPlateSet &>(plates).appearance(0);
+  check(output.y.at(15,16)==automatic.y.at(15,16) && output.y.at(16,16)==automatic.y.at(16,16),
+        "retained high-confidence ablation contour values remain exact");
 }
 
 void renderIdentityAndAlpha() {
@@ -489,6 +542,7 @@ int main() {
   regionHierarchy();
   primitiveGradientSurvival();
   interiorBroadForm();
+  barrierAblationSemantics();
   renderIdentityAndAlpha();
   if (failures)
     return 1;

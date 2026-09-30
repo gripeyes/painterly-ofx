@@ -14,6 +14,8 @@ struct Phase4BroadFormOptions {
   float strengthAB = 5.0f;
   float firstStrengthY = 0.0f;
   float firstStrengthAB = 0.0f;
+  float secondStrengthY = 0.0f;
+  float secondStrengthAB = 0.0f;
 };
 
 struct Phase4PoissonDiagnostics {
@@ -24,6 +26,8 @@ struct Phase4PoissonDiagnostics {
   double broadResultRmse = 0.0;
   int firstConstraints = 0;
   double firstResultRmse = 0.0;
+  int secondConstraints = 0;
+  double secondResultRmse = 0.0;
 };
 
 struct Phase4ChunkSynthesis {

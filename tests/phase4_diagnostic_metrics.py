@@ -118,12 +118,33 @@ def direction_image(source, output, half_span, path):
     Image.fromarray(np.uint8(image*255)).save(path)
 
 
+def broad_curvature(source, output, half_span):
+    """Measurement-only centered xx/xy/yy long-baseline second differences."""
+    h=half_span
+    def differences(v):
+        center=v[h:-h,h:-h]
+        xx=(v[h:-h,2*h:]-2*center+v[h:-h,:-2*h])/(h*h)
+        yy=(v[2*h:,h:-h]-2*center+v[:-2*h,h:-h])/(h*h)
+        xy=(v[2*h:,2*h:]-v[2*h:,:-2*h]-v[:-2*h,2*h:]+v[:-2*h,:-2*h])/(4*h*h)
+        return np.stack([xx, np.sqrt(2)*xy, yy],axis=-1)
+    a,b=differences(source),differences(output)
+    result=[]
+    for channel in range(3):
+        x,y=a[...,channel,:],b[...,channel,:]
+        energy=max(1e-20,float(np.sum(x*x)))
+        result.append({'relative_hessian_error':float(np.sqrt(np.sum((x-y)**2)/energy)),
+                       'hessian_energy_ratio':float(np.sum(y*y)/energy),
+                       'hessian_correlation':float(np.sum(x*y)/np.sqrt(energy*max(1e-20,np.sum(y*y))))})
+    return result
+
+
 def measure(directory):
-    paths = sorted(directory.glob('plate-?-appearance-yab.pfm'))
+    metadata=directory if list(directory.glob('plate-?-appearance-yab.pfm')) else directory.parent
+    paths = sorted(metadata.glob('plate-?-appearance-yab.pfm'))
     automatic = np.stack([pfm(p) for p in paths])
     synthesized = np.stack([pfm(directory/(p.name.replace('appearance', 'synthesized')))
                              for p in paths])
-    alpha = np.stack([np.asarray(Image.open(directory/(p.name[:7]+'-alpha.pgm')),
+    alpha = np.stack([np.asarray(Image.open(metadata/(p.name[:7]+'-alpha.pgm')),
                                   dtype=float)/255 for p in paths])
     # Display alpha is quantized; term energies are supporting diagnostics,
     # not numerical parity or exact sum-to-one evidence.
@@ -137,11 +158,16 @@ def measure(directory):
             'output_rmse_yab':np.sqrt(np.mean((output-source)**2, axis=(0, 1))).tolist(),
             'bands':band_metrics(source,output),
             'broad_direction':{str(span*2):broad_direction(source,output,span) for span in [8,16,32]},
+            'broad_curvature':{str(span*2):broad_curvature(source,output,span) for span in [8,16,32]},
             'automatic_layer_min':np.min(automatic, axis=(1, 2)).tolist(),
             'automatic_layer_max':np.max(automatic, axis=(1, 2)).tolist()}
     baseline = directory/'no-interior-yab.pfm'
     if (directory/'mean-only-yab.pfm').exists():
         baseline=directory/'mean-only-yab.pfm'
+    if (directory/'first-only-yab.pfm').exists():
+        baseline=directory/'first-only-yab.pfm'
+    if (directory/'barrier-baseline-yab.pfm').exists():
+        baseline=directory/'barrier-baseline-yab.pfm'
     if baseline.exists():
         before = pfm(baseline)
         result['baseline_bands'] = band_metrics(source, before)
@@ -149,8 +175,9 @@ def measure(directory):
             result['without_interior']=result['baseline_bands']
         result['baseline_name']=baseline.name
         result['baseline_broad_direction']={str(span*2):broad_direction(source,before,span) for span in [8,16,32]}
+        result['baseline_broad_curvature']={str(span*2):broad_curvature(source,before,span) for span in [8,16,32]}
         result['interior_change_rmse_yab'] = np.sqrt(np.mean((output-before)**2, axis=(0,1))).tolist()
-        for channel in ['y','ab']:
+        for channel in ['y','ab'] if (directory/'plate-A-broad-y-influence.pgm').exists() else []:
             masks=np.stack([np.asarray(Image.open(directory/(p.name[:7]+f'-broad-{channel}-influence.pgm')))>0
                             for p in paths])
             result[f'{channel}_moment_footprint_alpha_weighted_fraction']=float(np.mean(np.sum(alpha*masks,axis=0)))
