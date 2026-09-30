@@ -181,11 +181,12 @@ def measure(directory):
             masks=np.stack([np.asarray(Image.open(directory/(p.name[:7]+f'-broad-{channel}-influence.pgm')))>0
                             for p in paths])
             result[f'{channel}_moment_footprint_alpha_weighted_fraction']=float(np.mean(np.sum(alpha*masks,axis=0)))
-        # Presentation only: unclipped differences stay in the PFM files.
-        Image.fromarray(np.uint8(np.clip(.5+4*(output-source),0,1)*255)).save(directory/'interior-difference.png')
         for span in [8,16,32]:
             direction_image(source,before,span,directory/f'baseline-y-direction-error-{2*span}.png')
-            direction_image(source,output,span,directory/f'result-y-direction-error-{2*span}.png')
+    # Presentation only; raw processing values remain in unclipped PFMs.
+    Image.fromarray(np.uint8(np.clip(.5+4*(output-source),0,1)*255)).save(directory/'interior-difference.png')
+    for span in [8,16,32]:
+        direction_image(source,output,span,directory/f'result-y-direction-error-{2*span}.png')
     return result
 
 

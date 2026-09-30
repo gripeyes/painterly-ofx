@@ -3,6 +3,7 @@
 #include "core/LatentPlateGraph.h"
 #include "core/PlateSpill.h"
 #include "core/RegionHierarchy.h"
+#include "core/RegionalEigenField.h"
 #include "Phase4BarrierAblation.h"
 
 #include <algorithm>
@@ -389,6 +390,70 @@ int main(int argc, char **argv) {
                 << " plate_A_y_chunks=" << hierarchy.plates.front().yChunkCount
                 << " plate_A_ab_chunks=" << hierarchy.plates.front().abChunkCount
                 << " output=" << outputDir << '\n';
+      return 0;
+    }
+    if(std::string(argv[argc-1])=="--regional-eigen-sweep") {
+      if(params.spillAmount!=0)throw std::runtime_error("Regional field diagnostic requires Spill zero");
+      auto fields=pigment::regionalEigenFieldSweep(constant.plates,hierarchy);
+      std::ofstream modes(outputDir/"regional-modes.csv"),fits(outputDir/"regional-fits.csv");
+      modes<<"plate,family,chunk,component,interior,mode,eigenvalue,residual,cY,cA,cB,energyY,energyA,energyB\n";
+      fits<<"plate,family,chunk,component,interior,requested,used,mass,rmseY,rmseA,rmseB\n";
+      for(const auto &m:fields.modes) {
+        modes<<m.plate<<','<<m.family<<','<<m.chunk<<','<<m.component<<','<<m.interior<<','<<m.mode<<','<<m.eigenvalue<<','<<m.residual;
+        for(double c:m.coefficient)modes<<','<<c;
+        for(double e:m.gradientEnergy)modes<<','<<e;
+        modes<<'\n';
+      }
+      for(const auto &f:fields.fits) {
+        fits<<f.plate<<','<<f.family<<','<<f.chunk<<','<<f.component<<','<<f.interior<<','<<f.requested<<','<<f.used<<','<<f.mass;
+        for(double r:f.rmse)fits<<','<<r;
+        fits<<'\n';
+      }
+      for(int i=0;i<constant.plates.count();++i) for(int family=0;family<2;++family) {
+        const auto &atlas=family?fields.abModeAtlas[size_t(i)]:fields.yModeAtlas[size_t(i)];
+        for(size_t k=0;k<atlas.size();++k) {
+          std::string prefix=std::string("plate-")+char('A'+i)+(family?"-ab-mode-":"-y-mode-");
+          writePgm(outputDir/(prefix+std::to_string(k)+".pgm"),atlas[k].view(),true);
+        }
+      }
+      constexpr int yc[4]{2,4,8,12},ac[4]{1,2,4,6};
+      pigment::OwnedPlane alpha(bounds,1);
+      std::ofstream boundaryCheck(outputDir/"regional-boundaries.csv");
+      boundaryCheck<<"trial,plate,family,fixed_pixels,fixed_alpha_mass,errors\n";
+      for(size_t t=0;t<fields.results.size();++t) {
+        auto dir=outputDir/("modes-"+std::to_string(yc[t])+"-"+std::to_string(ac[t]));
+        std::filesystem::create_directories(dir);const auto &field=fields.results[t];
+        writeYabPfm(dir/"source-yab.pfm",static_cast<const pigment::OwnedYabPlanes &>(yab).view());
+        writeYabPfm(dir/"synthesized-yab.pfm",field.composite.view());
+        writeAppearance(dir/"synthesized-composite.ppm",field.composite.view(),static_cast<const pigment::OwnedPlane &>(alpha).view(),transform);
+        for(int i=0;i<constant.plates.count();++i) {
+          std::string prefix=std::string("plate-")+char('A'+i);
+          writeYabPfm(dir/(prefix+"-synthesized-yab.pfm"),field.appearance[size_t(i)].view());
+          writeAppearance(dir/(prefix+"-synthesized.ppm"),field.appearance[size_t(i)].view(),constant.plates.alpha(i),transform);
+          const auto &h=hierarchy.plates[size_t(i)];
+          auto input=constant.plates.appearance(i);auto output=field.appearance[size_t(i)].view();
+          for(int family=0;family<2;++family) {
+            const auto &labels=family?h.abChunk:h.yChunk;
+            auto support=family?constant.plates.supportAB(i):constant.plates.supportY(i);
+            size_t count=0,errors=0;double alphaMass=0;
+            int width=bounds.width(),height=bounds.height();
+            for(int y=0;y<height;++y)for(int x=0;x<width;++x) {
+              int p=y*width+x;int xx=x+bounds.x1,yy=y+bounds.y1;
+              bool fixed=support.at(xx,yy)<.02f || x==0 || y==0 || x+1==width || y+1==height;
+              for(int q:{x>0?p-1:-1,x+1<width?p+1:-1,y>0?p-width:-1,y+1<height?p+width:-1})
+                if(q>=0 && (labels[size_t(p)]!=labels[size_t(q)] || support.at(bounds.x1+q%width,bounds.y1+q/width)<.02f))fixed=true;
+              if(fixed) {
+                ++count;alphaMass+=constant.plates.alpha(i).at(xx,yy);
+                errors+=family?(input.a.at(xx,yy)!=output.a.at(xx,yy) || input.b.at(xx,yy)!=output.b.at(xx,yy)):
+                               input.y.at(xx,yy)!=output.y.at(xx,yy);
+              }
+            }
+            boundaryCheck<<t<<','<<i<<','<<family<<','<<count<<','<<alphaMass<<','<<errors<<'\n';
+            if(errors)throw std::runtime_error("Regional eigenfield modified a fixed boundary");
+          }
+        }
+      }
+      std::cout<<"PHASE4_REGIONAL_EIGEN_SWEEP output="<<outputDir<<'\n';
       return 0;
     }
     pigment::Phase4BroadFormOptions broadForm;

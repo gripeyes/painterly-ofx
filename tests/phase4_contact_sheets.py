@@ -33,6 +33,7 @@ if __name__=='__main__':
                          ('plate-?-support-y.pgm','support-y'),
                          ('plate-?-support-ab.pgm','support-ab'),
                          ('plate-?-appearance.ppm','public-appearance'),
+                         ('plate-?-synthesized.ppm','regional-plate-fields'),
                          ('latent-??.pgm','latent-alpha'),
                          ('latent-??-appearance.ppm','latent-appearance'),
                          ('plate-?-y-chunks.ppm','y-chunks'),
@@ -75,8 +76,17 @@ if __name__=='__main__':
     if all(p.exists() for p in ablation):
         contact(ablation,args.output/'barrier-ablation-comparison.png',labels=
                 ['Original','Second, fixed barriers','Remove cue <= 0.25','Remove cue <= 0.50','Remove cue <= 0.75'])
+    eigen=([args.input/'gate-a-reconstruction.ppm']+
+           [args.input/f'modes-{y}-{ab}/synthesized-composite.ppm' for y,ab in [(2,1),(4,2),(8,4),(12,6)]])
+    if all(p.exists() for p in eigen):
+        contact(eigen,args.output/'regional-eigen-sweep.png',labels=['Original','Y2 AB1','Y4 AB2','Y8 AB4','Y12 AB6'])
+    for plate in 'ABCDEFGH':
+        for family in ['y','ab']:
+            paths=sorted(args.input.glob(f'plate-{plate}-{family}-mode-*.pgm'),
+                         key=lambda p:int(p.stem.rsplit('-',1)[1]))
+            contact(paths,args.output/f'plate-{plate}-{family}-eigenmodes.png',columns=4)
     for name in ['gate-a.csv','poisson.csv','hierarchy.csv',
-                 'component-occupancy.csv','component-correlation.csv']:
+                 'component-occupancy.csv','component-correlation.csv','regional-modes.csv','regional-fits.csv','regional-boundaries.csv']:
         path=args.input/name
         if path.exists():
             (args.output/name).write_text(path.read_text())

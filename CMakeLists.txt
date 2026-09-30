@@ -56,6 +56,7 @@ add_library(pigment_core STATIC
   src/core/LatentPlateGraph.cpp
   src/core/RegionHierarchy.cpp
   src/core/ChunkGradientSynthesis.cpp
+  src/core/RegionalEigenField.cpp
   src/core/PlateSpill.cpp
   src/core/PigmentPhase4.cpp
   src/core/DetailCollapseResearch.cpp
@@ -139,6 +140,9 @@ if(BUILD_TESTING)
   add_executable(pigment_phase4_tests tests/PigmentPhase4Tests.cpp)
   target_link_libraries(pigment_phase4_tests PRIVATE pigment_core)
   add_test(NAME pigment_phase4_tests COMMAND pigment_phase4_tests)
+  add_executable(pigment_regional_eigen_tests tests/RegionalEigenFieldTests.cpp)
+  target_link_libraries(pigment_regional_eigen_tests PRIVATE pigment_core)
+  add_test(NAME pigment_regional_eigen_tests COMMAND pigment_regional_eigen_tests)
 
   add_executable(pigment_phase4_gate tests/Phase4GateHarness.cpp)
   target_link_libraries(pigment_phase4_gate PRIVATE pigment_core)
