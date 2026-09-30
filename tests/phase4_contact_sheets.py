@@ -35,6 +35,11 @@ if __name__=='__main__':
                          ('plate-?-appearance.ppm','public-appearance'),
                          ('plate-?-synthesized.ppm','regional-plate-fields'),
                          ('plate-?-boundary.ppm','boundary-appearance'),
+                         ('plate-?-y-transitions.pgm','y-transitions'),
+                         ('plate-?-ab-transitions.pgm','ab-transitions'),
+                         ('plate-?-y-value-rails.pgm','y-value-rails'),
+                         ('plate-?-ab-value-rails.pgm','ab-value-rails'),
+                         ('plate-?-side-values.ppm','curve-side-values'),
                          ('latent-??.pgm','latent-alpha'),
                          ('latent-??-appearance.ppm','latent-appearance'),
                          ('plate-?-y-chunks.ppm','y-chunks'),
@@ -84,13 +89,16 @@ if __name__=='__main__':
     boundary=[args.input/'gate-a-reconstruction.ppm',args.input/'exact-side/synthesized-composite.ppm',args.input/'broad-side/synthesized-composite.ppm']
     if all(p.exists() for p in boundary):
         contact(boundary,args.output/'boundary-appearance-comparison.png',labels=['Original','Exact side Y2 AB1','Broad side Y2 AB1'])
+    transition=[args.input/'gate-a-reconstruction.ppm',args.input/'synthesized-composite.ppm']
+    if (args.input/'transition-curves.csv').exists() and all(p.exists() for p in transition):
+        contact(transition,args.output/'sparse-transition-comparison.png',columns=2,labels=['Corrected A3 reconstruction','Sparse value-curve field'])
     for plate in 'ABCDEFGH':
         for family in ['y','ab']:
             paths=sorted(args.input.glob(f'plate-{plate}-{family}-mode-*.pgm'),
                          key=lambda p:int(p.stem.rsplit('-',1)[1]))
             contact(paths,args.output/f'plate-{plate}-{family}-eigenmodes.png',columns=4)
     for name in ['gate-a.csv','poisson.csv','hierarchy.csv',
-                 'component-occupancy.csv','component-correlation.csv','regional-modes.csv','regional-fits.csv','regional-boundaries.csv']:
+                 'component-occupancy.csv','component-correlation.csv','regional-modes.csv','regional-fits.csv','regional-boundaries.csv','transition-curves.csv','transition-solves.csv']:
         path=args.input/name
         if path.exists():
             (args.output/name).write_text(path.read_text())

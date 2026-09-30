@@ -4,6 +4,7 @@
 #include "core/PlateSpill.h"
 #include "core/RegionHierarchy.h"
 #include "core/RegionalEigenField.h"
+#include "core/SparseTransitionField.h"
 #include "Phase4BarrierAblation.h"
 
 #include <algorithm>
@@ -391,6 +392,31 @@ int main(int argc, char **argv) {
                 << " plate_A_ab_chunks=" << hierarchy.plates.front().abChunkCount
                 << " output=" << outputDir << '\n';
       return 0;
+    }
+    if(std::string(argv[argc-1])=="--sparse-transition-experiment") {
+      if(params.spillAmount!=0)throw std::runtime_error("Sparse transition isolation requires Spill zero");
+      const auto field=pigment::sparseTransitionField(constant.plates,hierarchy);
+      pigment::OwnedPlane alpha(bounds,1);
+      writeYabPfm(outputDir/"source-yab.pfm",static_cast<const pigment::OwnedYabPlanes &>(yab).view());
+      writeYabPfm(outputDir/"synthesized-yab.pfm",field.composite.view());
+      writeAppearance(outputDir/"synthesized-composite.ppm",field.composite.view(),static_cast<const pigment::OwnedPlane &>(alpha).view(),transform);
+      std::ofstream curves(outputDir/"transition-curves.csv"),solves(outputDir/"transition-solves.csv");
+      curves<<"plate,family,curve,point,x,y,length,negative_samples,positive_samples,negativeY,negativeA,negativeB,positiveY,positiveA,positiveB\n";
+      for(size_t i=0;i<field.curves.size();++i){const auto &c=field.curves[i];for(size_t j=0;j<c.points.size();++j){curves<<c.plate<<','<<c.family<<','<<i<<','<<j<<','<<c.points[j][0]<<','<<c.points[j][1]<<','<<c.length<<','<<c.negativeSamples<<','<<c.positiveSamples;
+        for(double v:c.negative)curves<<','<<v;for(double v:c.positive)curves<<','<<v;curves<<'\n';}}
+      solves<<"plate,family,chunk,pixels,curve_constraints,structural_constraints,solved,residual\n";
+      for(auto &s:field.solves)solves<<s.plate<<','<<s.family<<','<<s.chunk<<','<<s.pixels<<','<<s.curveConstraints<<','<<s.structuralConstraints<<','<<s.solved<<','<<s.residual<<'\n';
+      for(int i=0;i<constant.plates.count();++i){std::string prefix=std::string("plate-")+char('A'+i);
+        writePgm(outputDir/(prefix+"-y-transitions.pgm"),field.yCurves[size_t(i)].view());
+        writePgm(outputDir/(prefix+"-ab-transitions.pgm"),field.abCurves[size_t(i)].view());
+        writePgm(outputDir/(prefix+"-y-value-rails.pgm"),field.yConstraints[size_t(i)].view());
+        writePgm(outputDir/(prefix+"-ab-value-rails.pgm"),field.abConstraints[size_t(i)].view());
+        writeYabPfm(outputDir/(prefix+"-side-values-yab.pfm"),field.sideValues[size_t(i)].view());
+        writeAppearance(outputDir/(prefix+"-side-values.ppm"),field.sideValues[size_t(i)].view(),constant.plates.alpha(i),transform);
+        writeYabPfm(outputDir/(prefix+"-synthesized-yab.pfm"),field.appearance[size_t(i)].view());
+        writeAppearance(outputDir/(prefix+"-synthesized.ppm"),field.appearance[size_t(i)].view(),constant.plates.alpha(i),transform);
+      }
+      std::cout<<"PHASE4_SPARSE_TRANSITION output="<<outputDir<<'\n';return 0;
     }
     if(std::string(argv[argc-1])=="--boundary-appearance-experiment") {
       if(params.spillAmount!=0)throw std::runtime_error("Boundary diagnostic requires Spill zero");
