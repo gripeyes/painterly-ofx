@@ -24,9 +24,12 @@ struct RegionalEigenSweep {
   std::vector<std::vector<OwnedPlane>> yModeAtlas,abModeAtlas;
   std::vector<RegionalModeDiagnostic> modes;
   std::vector<RegionalFitDiagnostic> fits;
+  // Diagnostic-only boundary appearance, separate from fitted interiors.
+  std::vector<OwnedYabPlanes> boundaryAppearance;
 };
 // Isolated CPU experiment. No source-gradient survival or moment constraints.
 RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
     const Phase4RegionHierarchy &hierarchy,
-    const ExecutionContext &execution={});
+    const ExecutionContext &execution={}, bool broadSideBoundary=false,
+    bool lowBudgetOnly=false);
 } // namespace pigment

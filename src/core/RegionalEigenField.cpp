@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <queue>
+#include <map>
 #include <stdexcept>
 
 namespace pigment {
@@ -33,10 +34,12 @@ std::array<FloatPlaneView,3> channels(YabPlanes p){return {p.y,p.a,p.b};}
 }
 
 RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
-    const Phase4RegionHierarchy &hierarchy,const ExecutionContext &execution) {
+    const Phase4RegionHierarchy &hierarchy,const ExecutionContext &execution,
+    bool broadSideBoundary,bool lowBudgetOnly) {
   RectI b=hierarchy.bounds;int width=b.width(),height=b.height(),total=width*height;
   RegionalEigenSweep output;
-  for(int trial=0;trial<4;++trial) {
+  int trials=lowBudgetOnly?1:4;
+  for(int trial=0;trial<trials;++trial) {
     output.results.emplace_back(b);
     for(int plate=0;plate<plates.count();++plate) {
       output.results.back().appearance.emplace_back(b);
@@ -51,6 +54,10 @@ RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
     for(int k=0;k<12;++k) output.yModeAtlas.back().emplace_back(b);
     for(int k=0;k<6;++k) output.abModeAtlas.back().emplace_back(b);
     auto automatic=channels(plates.appearance(plate));
+    output.boundaryAppearance.emplace_back(b);
+    auto boundary=channels(output.boundaryAppearance.back().view());
+    for(int k=0;k<3;++k)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x)
+      boundary[size_t(k)].at(x,y)=automatic[size_t(k)].at(x,y);
     for(int family=0;family<2;++family) {
       const auto &h=hierarchy.plates[size_t(plate)];
       const auto &labels=family?h.abChunk:h.yChunk;
@@ -69,6 +76,70 @@ RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
         int x=p%width,y=p/width;
         fixed[size_t(p)]=at(support,p)<.02f || x==0 || y==0 || x+1==width || y+1==height;
         neighbors(p,[&](int q){if(labels[size_t(p)]!=labels[size_t(q)] || at(support,q)<.02f)fixed[size_t(p)]=true;});
+      }
+      if(broadSideBoundary) {
+        // Directed side groups: each side is fit solely from its own A3 values.
+        // No samples cross the retained contour. Split disconnected side traces.
+        std::map<std::pair<int,int>,std::vector<int>> sides;
+        for(int p=0;p<total;++p)if(at(support,p)>=.02f)
+          neighbors(p,[&](int q){if(labels[size_t(p)]!=labels[size_t(q)])
+            sides[{labels[size_t(p)],labels[size_t(q)]}].push_back(p);});
+        Eigen::MatrixXd sum=Eigen::MatrixXd::Zero(total,3);
+        Eigen::VectorXd mass=Eigen::VectorXd::Zero(total);
+        for(auto &[key,pixels]:sides) {
+          std::sort(pixels.begin(),pixels.end());pixels.erase(std::unique(pixels.begin(),pixels.end()),pixels.end());
+          std::vector<unsigned char> member(size_t(total),0);
+          for(int p:pixels)member[size_t(p)]=1;
+          for(int seed:pixels)if(member[size_t(seed)]==1) {
+            std::queue<int> todo;todo.push(seed);member[size_t(seed)]=2;
+            std::vector<int> trace;
+            while(!todo.empty()) {
+              int p=todo.front();todo.pop();trace.push_back(p);
+              // Eight-connected tracing only; this does not expand the mask.
+              for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx) {
+                int x=p%width+dx,y=p/width+dy;
+                if(x<0 || y<0 || x>=width || y>=height)continue;
+                int q=y*width+x;if(member[size_t(q)]==1){member[size_t(q)]=2;todo.push(q);}
+              }
+            }
+            std::sort(trace.begin(),trace.end());
+            double sw=0,cx=0,cy=0;
+            for(int p:trace){double w=at(support,p);sw+=w;cx+=w*(p%width);cy+=w*(p/width);}
+            cx/=sw;cy/=sw;Eigen::Matrix2d covariance=Eigen::Matrix2d::Zero();
+            for(int p:trace){Eigen::Vector2d v(p%width-cx,p/width-cy);covariance+=at(support,p)*v*v.transpose();}
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> axis(covariance/sw);
+            Eigen::Vector2d direction=axis.eigenvectors().col(1);
+            double scale=std::sqrt(std::max(1.0,axis.eigenvalues()[1]));
+            bool trend=family==0 && trace.size()>=8 && axis.eigenvalues()[1]>=4;
+            int columns=trend?2:1,n=int(trace.size());
+            Eigen::MatrixXd design(n,columns),values(n,3);
+            Eigen::VectorXd base(n),weights(n);
+            for(int i=0;i<n;++i){int p=trace[size_t(i)];base[i]=at(support,p);design(i,0)=1;
+              if(trend)design(i,1)=direction.dot(Eigen::Vector2d(p%width-cx,p/width-cy))/scale;
+              for(int k=0;k<3;++k)values(i,k)=at(automatic[size_t(k)],p);}
+            for(int k=family?1:0;k<(family?3:1);++k) {
+              weights=base;Eigen::VectorXd coefficients;
+              for(int pass=0;pass<3;++pass){
+                Eigen::MatrixXd gram=design.transpose()*weights.asDiagonal()*design;
+                gram.diagonal().array()+=1e-10*sw;
+                coefficients=gram.ldlt().solve(design.transpose()*weights.asDiagonal()*values.col(k));
+                Eigen::VectorXd residual=values.col(k)-design*coefficients;
+                std::vector<double> magnitude;for(int i=0;i<n;++i)magnitude.push_back(std::abs(residual[i]));
+                std::sort(magnitude.begin(),magnitude.end());
+                double robustScale=std::max(1e-6,1.4826*magnitude[size_t(n/2)]);
+                for(int i=0;i<n;++i)weights[i]=base[i]/(1+std::pow(residual[i]/(2*robustScale),2));
+              }
+              Eigen::VectorXd fitted=design*coefficients;
+              for(int i=0;i<n;++i)sum(trace[size_t(i)],k)+=base[i]*fitted[i];
+            }
+            for(int i=0;i<n;++i)mass[trace[size_t(i)]]+=base[i];
+          }
+        }
+        for(int p=0;p<total;++p)if(mass[p]>0)
+          for(int k=family?1:0;k<(family?3:1);++k) {
+            float v=float(sum(p,k)/mass[p]);boundary[size_t(k)].at(b.x1+p%width,b.y1+p/width)=v;
+            for(auto &result:output.results)channels(result.appearance[size_t(plate)].view())[size_t(k)].at(b.x1+p%width,b.y1+p/width)=v;
+          }
       }
       int component=0;
       for(int seed=0;seed<total;++seed) if(!fixed[size_t(seed)] && !visited[size_t(seed)]) {
@@ -91,7 +162,7 @@ RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
           neighbors(p,[&](int q) {
             if(labels[size_t(p)]!=labels[size_t(q)] || at(support,q)<.02f)return;
             ++degree;
-            if(fixed[size_t(q)]) for(int k=0;k<3;++k)rhs(i,k)+=at(automatic[size_t(k)],q);
+            if(fixed[size_t(q)]) for(int k=0;k<3;++k)rhs(i,k)+=at(boundary[size_t(k)],q);
             else triplets.emplace_back(i,index[size_t(q)],-1);
           });
           triplets.emplace_back(i,i,degree);
@@ -101,7 +172,7 @@ RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
         Eigen::MatrixXd lift=op.factor.solve(rhs);
         double liftResidual=(laplacian*lift-rhs).norm()/std::max(1.0,rhs.norm());
         if(!lift.allFinite() || liftResidual>1e-7)throw std::runtime_error("Regional boundary lift failed");
-        int wanted=std::min(n,counts.back());
+        int wanted=std::min(n,lowBudgetOnly?counts.front():counts.back());
         Eigen::MatrixXd phi;Eigen::VectorXd eigenvalues;
         if(n<=48) {
           Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solve{Eigen::MatrixXd(laplacian)};
@@ -130,7 +201,7 @@ RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
           record.component=component;record.interior=n;record.mode=k;record.eigenvalue=eigenvalues[k];record.residual=residual;
           output.modes.push_back(record);
         }
-        for(int trial=0;trial<4;++trial) {
+        for(int trial=0;trial<trials;++trial) {
           int use=std::min(wanted,counts[size_t(trial)]);
           Eigen::MatrixXd basis=phi.leftCols(use);
           Eigen::MatrixXd gram=basis.transpose()*weight.asDiagonal()*basis;
@@ -145,7 +216,7 @@ RegionalEigenSweep regionalEigenFieldSweep(const PublicPlateSet &plates,
             for(int i=0;i<n;++i)dst[size_t(k)].at(b.x1+region[size_t(i)]%width,b.y1+region[size_t(i)]/width)=float(fitted(i,k));
           }
           output.fits.push_back(fit);
-          if(trial==3) for(int k=0;k<use;++k) {
+          if(trial==trials-1) for(int k=0;k<use;++k) {
             auto &record=output.modes[output.modes.size()-size_t(wanted)+size_t(k)];
             for(int channel=family?1:0;channel<(family?3:1);++channel) {
               record.coefficient[size_t(channel)]=coeff(k,channel);

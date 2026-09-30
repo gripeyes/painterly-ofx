@@ -392,6 +392,30 @@ int main(int argc, char **argv) {
                 << " output=" << outputDir << '\n';
       return 0;
     }
+    if(std::string(argv[argc-1])=="--boundary-appearance-experiment") {
+      if(params.spillAmount!=0)throw std::runtime_error("Boundary diagnostic requires Spill zero");
+      pigment::OwnedPlane alpha(bounds,1);
+      for(bool broad:{false,true}) {
+        const auto fields=pigment::regionalEigenFieldSweep(constant.plates,hierarchy,{},broad,true);
+        auto dir=outputDir/(broad?"broad-side":"exact-side");std::filesystem::create_directories(dir);
+        const auto &field=fields.results.front();
+        writeYabPfm(dir/"source-yab.pfm",static_cast<const pigment::OwnedYabPlanes &>(yab).view());
+        writeYabPfm(dir/"synthesized-yab.pfm",field.composite.view());
+        writeAppearance(dir/"synthesized-composite.ppm",field.composite.view(),static_cast<const pigment::OwnedPlane &>(alpha).view(),transform);
+        std::ofstream modes(dir/"regional-modes.csv");
+        modes<<"plate,family,chunk,component,interior,mode,eigenvalue,residual,cY,cA,cB\n";
+        for(const auto &m:fields.modes){modes<<m.plate<<','<<m.family<<','<<m.chunk<<','<<m.component<<','<<m.interior<<','<<m.mode<<','<<m.eigenvalue<<','<<m.residual;
+          for(double c:m.coefficient)modes<<','<<c;modes<<'\n';}
+        for(int i=0;i<constant.plates.count();++i) {
+          std::string prefix=std::string("plate-")+char('A'+i);
+          writeYabPfm(dir/(prefix+"-synthesized-yab.pfm"),field.appearance[size_t(i)].view());
+          writeAppearance(dir/(prefix+"-synthesized.ppm"),field.appearance[size_t(i)].view(),constant.plates.alpha(i),transform);
+          writeYabPfm(dir/(prefix+"-boundary-yab.pfm"),fields.boundaryAppearance[size_t(i)].view());
+          writeAppearance(dir/(prefix+"-boundary.ppm"),fields.boundaryAppearance[size_t(i)].view(),constant.plates.alpha(i),transform);
+        }
+      }
+      std::cout<<"PHASE4_BOUNDARY_APPEARANCE output="<<outputDir<<'\n';return 0;
+    }
     if(std::string(argv[argc-1])=="--regional-eigen-sweep") {
       if(params.spillAmount!=0)throw std::runtime_error("Regional field diagnostic requires Spill zero");
       auto fields=pigment::regionalEigenFieldSweep(constant.plates,hierarchy);

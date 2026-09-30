@@ -34,6 +34,7 @@ if __name__=='__main__':
                          ('plate-?-support-ab.pgm','support-ab'),
                          ('plate-?-appearance.ppm','public-appearance'),
                          ('plate-?-synthesized.ppm','regional-plate-fields'),
+                         ('plate-?-boundary.ppm','boundary-appearance'),
                          ('latent-??.pgm','latent-alpha'),
                          ('latent-??-appearance.ppm','latent-appearance'),
                          ('plate-?-y-chunks.ppm','y-chunks'),
@@ -80,6 +81,9 @@ if __name__=='__main__':
            [args.input/f'modes-{y}-{ab}/synthesized-composite.ppm' for y,ab in [(2,1),(4,2),(8,4),(12,6)]])
     if all(p.exists() for p in eigen):
         contact(eigen,args.output/'regional-eigen-sweep.png',labels=['Original','Y2 AB1','Y4 AB2','Y8 AB4','Y12 AB6'])
+    boundary=[args.input/'gate-a-reconstruction.ppm',args.input/'exact-side/synthesized-composite.ppm',args.input/'broad-side/synthesized-composite.ppm']
+    if all(p.exists() for p in boundary):
+        contact(boundary,args.output/'boundary-appearance-comparison.png',labels=['Original','Exact side Y2 AB1','Broad side Y2 AB1'])
     for plate in 'ABCDEFGH':
         for family in ['y','ab']:
             paths=sorted(args.input.glob(f'plate-{plate}-{family}-mode-*.pgm'),
