@@ -75,6 +75,49 @@ def band_metrics(source, output):
                                      np.maximum(1e-6,np.std(sm,axis=(0,1)))).tolist()}
 
 
+def broad_direction(source, output, half_span):
+    """Measurement-only centered long chords, without filtered target images.
+
+    Each gradient spans 2*half_span pixels. This whole-frame statistic may
+    cross contours, so it supplements (never replaces) photographic judgment.
+    """
+    h=half_span
+    def chords(v):
+        gx=(v[h:-h,2*h:]-v[h:-h,:-2*h])/(2*h)
+        gy=(v[2*h:,h:-h]-v[:-2*h,h:-h])/(2*h)
+        return np.stack([gx,gy],axis=-1)
+    a,b=chords(source),chords(output)
+    ma=np.linalg.norm(a,axis=-1);mb=np.linalg.norm(b,axis=-1)
+    dot=np.sum(a*b,axis=-1)
+    result=[]
+    for channel in range(3):
+        scale=max(1e-8,float(np.std(source[...,channel])))
+        mask=ma[...,channel]>scale*.01/(2*h)
+        weights=ma[...,channel]*mask
+        total=max(1e-20,float(np.sum(weights)))
+        cosine=np.clip(dot[...,channel]/np.maximum(1e-20,ma[...,channel]*mb[...,channel]),-1,1)
+        result.append({'weighted_cosine':float(np.sum(weights*cosine)/total),
+                       'weighted_angle_degrees':float(np.sum(weights*np.degrees(np.arccos(cosine)))/total),
+                       'relative_gradient_error':float(np.sqrt(np.sum((a[...,channel,:]-b[...,channel,:])**2)/
+                                                               max(1e-20,np.sum(a[...,channel,:]**2)))),
+                       'measured_fraction':float(np.mean(mask))})
+    return result
+
+
+def direction_image(source, output, half_span, path):
+    """Grayscale Y angle error: black aligned, white reversed; weak source dark."""
+    h=half_span
+    def chords(v):
+        return np.stack([(v[h:-h,2*h:,0]-v[h:-h,:-2*h,0]),
+                         (v[2*h:,h:-h,0]-v[:-2*h,h:-h,0])],axis=-1)
+    a,b=chords(source),chords(output)
+    ma=np.linalg.norm(a,axis=-1);mb=np.linalg.norm(b,axis=-1)
+    cosine=np.clip(np.sum(a*b,axis=-1)/np.maximum(1e-20,ma*mb),-1,1)
+    image=np.zeros(source.shape[:2])
+    image[h:-h,h:-h]=np.arccos(cosine)/np.pi*(ma>max(1e-8,float(np.std(source[...,0])))*.01)
+    Image.fromarray(np.uint8(image*255)).save(path)
+
+
 def measure(directory):
     paths = sorted(directory.glob('plate-?-appearance-yab.pfm'))
     automatic = np.stack([pfm(p) for p in paths])
@@ -93,12 +136,19 @@ def measure(directory):
             'synthesized':gradient_terms(alpha, synthesized),
             'output_rmse_yab':np.sqrt(np.mean((output-source)**2, axis=(0, 1))).tolist(),
             'bands':band_metrics(source,output),
+            'broad_direction':{str(span*2):broad_direction(source,output,span) for span in [8,16,32]},
             'automatic_layer_min':np.min(automatic, axis=(1, 2)).tolist(),
             'automatic_layer_max':np.max(automatic, axis=(1, 2)).tolist()}
     baseline = directory/'no-interior-yab.pfm'
+    if (directory/'mean-only-yab.pfm').exists():
+        baseline=directory/'mean-only-yab.pfm'
     if baseline.exists():
         before = pfm(baseline)
-        result['without_interior'] = band_metrics(source, before)
+        result['baseline_bands'] = band_metrics(source, before)
+        if baseline.name=='no-interior-yab.pfm':
+            result['without_interior']=result['baseline_bands']
+        result['baseline_name']=baseline.name
+        result['baseline_broad_direction']={str(span*2):broad_direction(source,before,span) for span in [8,16,32]}
         result['interior_change_rmse_yab'] = np.sqrt(np.mean((output-before)**2, axis=(0,1))).tolist()
         for channel in ['y','ab']:
             masks=np.stack([np.asarray(Image.open(directory/(p.name[:7]+f'-broad-{channel}-influence.pgm')))>0
@@ -106,6 +156,9 @@ def measure(directory):
             result[f'{channel}_moment_footprint_alpha_weighted_fraction']=float(np.mean(np.sum(alpha*masks,axis=0)))
         # Presentation only: unclipped differences stay in the PFM files.
         Image.fromarray(np.uint8(np.clip(.5+4*(output-source),0,1)*255)).save(directory/'interior-difference.png')
+        for span in [8,16,32]:
+            direction_image(source,before,span,directory/f'baseline-y-direction-error-{2*span}.png')
+            direction_image(source,output,span,directory/f'result-y-direction-error-{2*span}.png')
     return result
 
 

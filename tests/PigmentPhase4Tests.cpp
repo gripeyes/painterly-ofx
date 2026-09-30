@@ -418,8 +418,34 @@ void interiorBroadForm() {
   auto repeated=static_cast<const pigment::OwnedYabPlanes &>(repeat.plateAppearance[0]).view();
   for(int y=0;y<96;++y) for(int x=0;x<96;++x)
     check(repeated.y.at(x,y)==c.y.at(x,y),"interior constraint sites and solve are deterministic");
+  auto first=enabled;first.firstStrengthY=20;first.firstStrengthAB=2.5;
+  auto directional=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},first);
+  auto d=static_cast<const pigment::OwnedYabPlanes &>(directional.plateAppearance[0]).view();
+  check(directional.solver[0][0].firstConstraints>0 && directional.solver[0][0].converged,
+        "supported first moments participate without primitive-fit qualification");
+  double meanDirectionError=0,firstDirectionError=0;
+  for(int y=24;y<72;++y) for(int x=24;x<72;++x) {
+    double target=form[size_t(y)*96+x+8]-form[size_t(y)*96+x-8];
+    meanDirectionError+=std::pow(c.y.at(x+8,y)-c.y.at(x-8,y)-target,2);
+    firstDirectionError+=std::pow(d.y.at(x+8,y)-d.y.at(x-8,y)-target,2);
+    check(d.a.at(x,y)==0 && d.b.at(x,y)==0,"first moments preserve neutral chroma");
+  }
+  check(firstDirectionError<meanDirectionError,"first moments improve broad long-chord direction fixture");
+  auto firstRepeat=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},first);
+  auto dr=static_cast<const pigment::OwnedYabPlanes &>(firstRepeat.plateAppearance[0]).view();
+  auto changedFirst=first;changedFirst.firstStrengthY*=2;
+  auto independent=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},changedFirst);
+  auto di=static_cast<const pigment::OwnedYabPlanes &>(independent.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+  {
+    check(dr.y.at(x,y)==d.y.at(x,y),"first-moment solve is deterministic");
+    check(di.a.at(x,y)==d.a.at(x,y) && di.b.at(x,y)==d.b.at(x,y),
+          "Y first-moment strength leaves AB unchanged");
+    if(x==0 || y==0 || x==95 || y==95)
+      check(d.y.at(x,y)==source.y.at(x,y),"first moments do not change retained contour values");
+  }
   params.lumaChunkScale=0;params.chromaChunkScale=0;
-  auto bypass=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},enabled);
+  auto bypass=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},first);
   auto untouched=static_cast<const pigment::OwnedYabPlanes &>(bypass.plateAppearance[0]).view();
   for(int y=0;y<96;++y) for(int x=0;x<96;++x)
     check(untouched.y.at(x,y)==source.y.at(x,y),"zero chunk scale bypasses interior constraints exactly");

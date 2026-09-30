@@ -392,20 +392,27 @@ int main(int argc, char **argv) {
     }
     pigment::Phase4BroadFormOptions broadForm;
     const auto experiment=std::string(argv[argc-1]);
-    broadForm.enabled=experiment=="--interior-experiment" || experiment=="--interior-strong";
+    const bool firstExperiment=experiment=="--first-moment-experiment";
+    broadForm.enabled=experiment=="--interior-experiment" || experiment=="--interior-strong" || firstExperiment;
+    if(firstExperiment) {
+      broadForm.firstStrengthY=20; broadForm.firstStrengthAB=2.5;
+    }
     if(experiment=="--interior-strong") {
       broadForm.strengthY*=4; broadForm.strengthAB*=4;
     }
     if(std::string(argv[argc-1])=="--no-interior") broadForm.enabled=false;
     if(broadForm.enabled) {
-      auto baselineOptions=broadForm;baselineOptions.enabled=false;
+      auto baselineOptions=broadForm;
+      baselineOptions.enabled=firstExperiment;
+      baselineOptions.firstStrengthY=baselineOptions.firstStrengthAB=0;
+      const std::string baselineName=firstExperiment?"mean-only":"no-interior";
       auto baseline=pigment::synthesizePhase4Chunks(
           static_cast<const pigment::OwnedYabPlanes &>(yab).view(),
           constant.plates,hierarchy,params,{},baselineOptions);
-      writeYabPfm(outputDir/"no-interior-yab.pfm",
+      writeYabPfm(outputDir/(baselineName+"-yab.pfm"),
                  static_cast<const pigment::OwnedYabPlanes &>(baseline.preSpill).view());
       pigment::OwnedPlane alpha(bounds,1);
-      writeAppearance(outputDir/"no-interior.ppm",
+      writeAppearance(outputDir/(baselineName+".ppm"),
                       static_cast<const pigment::OwnedYabPlanes &>(baseline.preSpill).view(),
                       static_cast<const pigment::OwnedPlane &>(alpha).view(),transform);
     }
@@ -417,14 +424,15 @@ int main(int argc, char **argv) {
     writeYabPfm(outputDir / "synthesized-yab.pfm",
                 static_cast<const pigment::OwnedYabPlanes &>(synthesis.preSpill).view());
     std::ofstream poisson(outputDir / "poisson.csv");
-    poisson << "plate,channel,iterations,relative_residual,converged,broad_constraints,broad_result_rmse\n";
+    poisson << "plate,channel,iterations,relative_residual,converged,broad_constraints,broad_result_rmse,first_constraints,first_result_rmse\n";
     bool converged = true;
     for (size_t i = 0; i < synthesis.solver.size(); ++i)
       for (int channel = 0; channel < 3; ++channel) {
         const auto &s = synthesis.solver[i][size_t(channel)];
         poisson << i << ',' << channel << ',' << s.iterations << ','
                 << s.relativeResidual << ',' << s.converged << ','
-                << s.broadConstraints << ',' << s.broadResultRmse << '\n';
+                << s.broadConstraints << ',' << s.broadResultRmse << ','
+                << s.firstConstraints << ',' << s.firstResultRmse << '\n';
         converged &= s.converged;
       }
     poisson.close();

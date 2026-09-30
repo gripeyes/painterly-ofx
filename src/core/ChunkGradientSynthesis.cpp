@@ -32,7 +32,8 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
     ConstFloatPlaneView support, const std::vector<int>&chunks, int chunkCount,
     const std::vector<float>&edgeX, const std::vector<float>&edgeY,
     float chunkScale, float complexity, const ExecutionContext&execution,
-    bool interiorEnabled, float interiorSpacing, float interiorStrength) {
+    bool interiorEnabled, float interiorSpacing, float interiorStrength,
+    float firstStrength) {
   RectI b=automatic.bounds;
   int width=b.width(),height=b.height(),count=width*height;
   ChannelResult out;
@@ -171,6 +172,7 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
   struct Moment {
     std::vector<std::pair<int,double>> weights; // normalized supported region
     double target=0,adjustedTarget=0,strength=0;
+    bool first=false;
   };
   std::vector<Moment> moments;
   if(interiorEnabled && interiorStrength>0) {
@@ -249,10 +251,45 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
           else moment.weights.emplace_back(p,w);
         }
         if(!moment.weights.empty()) moments.push_back(std::move(moment));
+        if(firstStrength>0) {
+          // Centered, support-weighted first moments. No primitive-fit gate:
+          // these describe regional direction, not a replacement pixel field.
+          double cx=0,cy=0;
+          for(int p:patch) {
+            double mu=coverage[size_t(p)]/weight;
+            cx+=mu*(p%width);cy+=mu*(p/width);
+          }
+          for(int axis=0;axis<2;++axis) {
+            double variance=0;
+            for(int p:patch) {
+              double dx=axis==0?p%width-cx:p/width-cy;
+              variance+=coverage[size_t(p)]/weight*dx*dx;
+            }
+            double extent=std::sqrt(variance);
+            // Reject a nearly one-dimensional measurement on this axis.
+            if(extent<.15*radius) continue;
+            Moment first;first.first=true;
+            first.strength=firstStrength*weight/(radius*radius);
+            for(int p:patch) {
+              double dx=axis==0?p%width-cx:p/width-cy;
+              double w=coverage[size_t(p)]/weight*dx/extent;
+              first.target+=w*input[size_t(p)];
+              if(!fixed[size_t(p)]) first.weights.emplace_back(p,w);
+            }
+            first.adjustedTarget=first.target;
+            for(int p:patch) if(fixed[size_t(p)]) {
+              double dx=axis==0?p%width-cx:p/width-cy;
+              first.adjustedTarget-=coverage[size_t(p)]/weight*dx/extent*input[size_t(p)];
+            }
+            if(!first.weights.empty()) moments.push_back(std::move(first));
+          }
+        }
       }
     }
   }
-  out.solver.broadConstraints=int(moments.size());
+  for(const auto &moment:moments)
+    if(moment.first) ++out.solver.firstConstraints;
+    else ++out.solver.broadConstraints;
   for(int p=0;p<count;++p) if(out.broadInfluence[size_t(p)]>0)
     out.broadTarget[size_t(p)]/=out.broadInfluence[size_t(p)];
   auto appendEdge=[&](int p,int q,float level,double &weight) {
@@ -359,13 +396,15 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
   apply(u,ad);for(int p=0;p<count;++p) r[size_t(p)]=fixed[size_t(p)]?0:rhs[size_t(p)]-ad[size_t(p)];
   out.solver.relativeResidual=std::sqrt(dot(r,r))/std::max(1e-14,initial);
   out.solver.converged=initial<1e-14 || out.solver.relativeResidual<=1e-5;
-  double after=0;
+  double after=0,firstAfter=0;
   for(const auto &moment:moments) {
     double c=0;
     for(auto [p,w]:moment.weights) c+=w*u[size_t(p)];
-    after+=(c-moment.adjustedTarget)*(c-moment.adjustedTarget);
+    double error=(c-moment.adjustedTarget)*(c-moment.adjustedTarget);
+    if(moment.first) firstAfter+=error; else after+=error;
   }
-  out.solver.broadResultRmse=std::sqrt(after/std::max(size_t(1),moments.size()));
+  out.solver.broadResultRmse=std::sqrt(after/std::max(1,out.solver.broadConstraints));
+  out.solver.firstResultRmse=std::sqrt(firstAfter/std::max(1,out.solver.firstConstraints));
   for(int p=0;p<count;++p) {out.values[size_t(p)]=float(u[size_t(p)]);
                            out.gradient[size_t(p)]=std::sqrt(out.gradient[size_t(p)]);}
   return out;
@@ -394,13 +433,13 @@ Phase4ChunkSynthesis synthesizePhase4Chunks(ConstYabPlanes source,
     auto automatic=plates.appearance(plate);const auto &h=hierarchy.plates[size_t(plate)];
     auto y=synthesizeChannel(automatic.y,plates.supportY(plate),h.yChunk,h.yChunkCount,h.yEdgeX,h.yEdgeY,
                              params.lumaChunkScale,params.gradientComplexity,execution,
-                             broadForm.enabled,broadForm.spacingY,broadForm.strengthY);
+                             broadForm.enabled,broadForm.spacingY,broadForm.strengthY,broadForm.firstStrengthY);
     auto a=synthesizeChannel(automatic.a,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
                              params.chromaChunkScale,params.gradientComplexity,execution,
-                             broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB);
+                             broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB,broadForm.firstStrengthAB);
     auto b=synthesizeChannel(automatic.b,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
                              params.chromaChunkScale,params.gradientComplexity,execution,
-                             broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB);
+                             broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB,broadForm.firstStrengthAB);
     result.solver.push_back({y.solver,a.solver,b.solver});
     auto out=result.plateAppearance.back().view();copyChannel(y.values,out.y);copyChannel(a.values,out.a);copyChannel(b.values,out.b);
     copyChannel(y.gradient,result.simplifiedGradient.back().view());
