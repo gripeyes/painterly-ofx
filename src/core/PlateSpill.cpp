@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -12,7 +13,7 @@ namespace {
 
 std::vector<float> transport(const SparseAffinityGraph &graph,
                              const std::vector<float> &seed, float reach,
-                             float structureRespect) {
+                             float structureRespect,const ExecutionContext &execution) {
   const int count = graph.nodeCount();
   std::vector<float> distance(size_t(count),
                               std::numeric_limits<float>::infinity());
@@ -27,6 +28,7 @@ std::vector<float> transport(const SparseAffinityGraph &graph,
       queue.push({distance[size_t(node)], node});
     }
   while (!queue.empty()) {
+    if(execution.cancelled())throw std::runtime_error("Spill transport cancelled");
     auto [current, node] = queue.top();
     queue.pop();
     if (current != distance[size_t(node)] || current > reach)
@@ -34,6 +36,7 @@ std::vector<float> transport(const SparseAffinityGraph &graph,
     for (int edgeIndex = graph.rowOffsets[node];
          edgeIndex < graph.rowOffsets[node + 1]; ++edgeIndex) {
       const auto &edge = graph.edges[size_t(edgeIndex)];
+      if(edge.weight<=0 || (structureRespect>=1 && edge.boundary>=1))continue;
       float capacity = std::max(1.0e-6f, edge.weight);
       float edgeCost =
           edge.physicalDistance *
@@ -53,14 +56,24 @@ std::vector<float> transport(const SparseAffinityGraph &graph,
 }
 
 } // namespace
+Phase4SpillTransport preparePhase4SpillTransport(const PublicPlateSet &plates,
+    const SparseAffinityGraph &graph,const Phase4Params &params,const ExecutionContext &execution){
+  Phase4SpillTransport result;auto bounds=plates.bounds();int width=bounds.width(),height=bounds.height();
+  result.reach=params.spillReach;result.structureRespect=params.structureRespect;
+  for(int plate=0;plate<plates.count();++plate){std::vector<float> sy(size_t(graph.nodeCount())),sc(size_t(graph.nodeCount()));
+    for(int gy=0;gy<graph.height;++gy)for(int gx=0;gx<graph.width;++gx){int x=bounds.x1+std::min(width-1,gx*width/graph.width),y=bounds.y1+std::min(height-1,gy*height/graph.height),node=gy*graph.width+gx;
+      sy[size_t(node)]=plates.supportY(plate).at(x,y);sc[size_t(node)]=plates.supportAB(plate).at(x,y);}
+    result.y.push_back(transport(graph,sy,params.spillReach,params.structureRespect,execution));
+    result.ab.push_back(transport(graph,sc,params.spillReach,params.structureRespect,execution));
+  }return result;
+}
 
 Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
                                    const PublicPlateSet &plates,
                                    const Phase4ChunkSynthesis &synthesis,
                                    const SparseAffinityGraph &graph,
                                    const Phase4Params &params,
-                                   const ExecutionContext &execution) {
-  (void)execution;
+                                   const ExecutionContext &execution,const Phase4SpillTransport *prepared) {
   Phase4SpillResult result(plates.bounds());
   const RectI bounds = plates.bounds();
   const int width = bounds.width(), height = bounds.height();
@@ -70,26 +83,15 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
   for (int plate = 0; plate < plateCount; ++plate) {
     result.plateAppearance.emplace_back(bounds);
     result.influence.emplace_back(bounds);
+    result.influenceY.emplace_back(bounds);result.transportY.emplace_back(bounds);result.transportAB.emplace_back(bounds);
   }
 
-  std::vector<std::vector<float>> transportY(plateCount),
-      transportAB(plateCount);
-  for (int plate = 0; plate < plateCount; ++plate) {
-    std::vector<float> seedY(size_t(graph.nodeCount())),
-        seedAB(size_t(graph.nodeCount()));
-    for (int gy = 0; gy < graph.height; ++gy)
-      for (int gx = 0; gx < graph.width; ++gx) {
-        int x = bounds.x1 + std::min(width - 1, gx * width / graph.width);
-        int y = bounds.y1 + std::min(height - 1, gy * height / graph.height);
-        int node = gy * graph.width + gx;
-        seedY[size_t(node)] = plates.supportY(plate).at(x, y);
-        seedAB[size_t(node)] = plates.supportAB(plate).at(x, y);
-      }
-    transportY[plate] =
-        transport(graph, seedY, params.spillReach, params.structureRespect);
-    transportAB[plate] =
-        transport(graph, seedAB, params.spillReach, params.structureRespect);
-  }
+  Phase4SpillTransport owned;
+  if(!prepared){owned=preparePhase4SpillTransport(plates,graph,params,execution);prepared=&owned;}
+  const auto &transportY=prepared->y,&transportAB=prepared->ab;
+  if(prepared->reach!=params.spillReach || prepared->structureRespect!=params.structureRespect)throw std::runtime_error("Spill prepared transport settings mismatch");
+  if(int(transportY.size())!=plateCount || int(transportAB.size())!=plateCount)throw std::runtime_error("Spill prepared transport plate mismatch");
+  for(int i=0;i<plateCount;++i)if(int(transportY[size_t(i)].size())!=graph.nodeCount() || int(transportAB[size_t(i)].size())!=graph.nodeCount())throw std::runtime_error("Spill prepared transport geometry mismatch");
 
   auto graphValue = [&](const std::vector<float> &field, int x, int y) {
     int gx = std::min(graph.width - 1, (x - bounds.x1) * graph.width / width);
@@ -97,7 +99,8 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
         std::min(graph.height - 1, (y - bounds.y1) * graph.height / height);
     return field[size_t(gy) * graph.width + gx];
   };
-  for (int y = bounds.y1; y < bounds.y2; ++y)
+  for (int y = bounds.y1; y < bounds.y2; ++y) {
+    if(execution.cancelled())throw std::runtime_error("Spill reconstruction cancelled");
     for (int x = bounds.x1; x < bounds.x2; ++x) {
       std::vector<float> artisticAlpha(static_cast<size_t>(plateCount));
       float alphaSum = 0.0f;
@@ -121,6 +124,9 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
         float baseB = source.b.at(x, y) + receiverControl.biasB;
         float sumY = baseY, sumA = baseA, sumB = baseB;
         float weightY = 1.0f, weightAB = 1.0f, influence = 0.0f;
+        float influenceY=0;
+        result.transportY[size_t(receiver)].view().at(x,y)=graphValue(transportY[receiver],x,y);
+        result.transportAB[size_t(receiver)].view().at(x,y)=graphValue(transportAB[receiver],x,y);
         if (receiverControl.enabled && params.spillAmount > 0.0f) {
           for (int donor = 0; donor < plateCount; ++donor) {
             if (donor == receiver)
@@ -168,6 +174,7 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
             sumB += kab * donorB;
             weightAB += kab;
             influence += kab;
+            influenceY += ky;
           }
         }
         auto output = result.plateAppearance[size_t(receiver)].view();
@@ -175,6 +182,7 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
         output.a.at(x, y) = sumA / weightAB;
         output.b.at(x, y) = sumB / weightAB;
         result.influence[size_t(receiver)].view().at(x, y) = influence;
+        result.influenceY[size_t(receiver)].view().at(x,y)=influenceY;
       }
 
       float yy = 0, aa = 0, bb = 0;
@@ -199,6 +207,7 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
       composite.a.at(x, y) = aa;
       composite.b.at(x, y) = bb;
     }
+  }
   return result;
 }
 

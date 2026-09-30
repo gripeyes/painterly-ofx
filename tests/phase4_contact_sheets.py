@@ -41,7 +41,7 @@ if __name__=='__main__':
                          ('plate-?-ab-value-rails.pgm','ab-value-rails'),
                          ('plate-?-side-values.ppm','curve-side-values'),
                          ('latent-??.pgm','latent-alpha'),
-                         ('latent-??-appearance.ppm','latent-appearance'),
+                         ('latent-appearance-??.ppm','latent-appearance'),
                          ('plate-?-y-chunks.ppm','y-chunks'),
                          ('plate-?-ab-chunks.ppm','ab-chunks'),
                          ('plate-?-y-retained.pgm','y-retained'),
@@ -97,6 +97,7 @@ if __name__=='__main__':
             paths=sorted(args.input.glob(f'plate-{plate}-{family}-mode-*.pgm'),
                          key=lambda p:int(p.stem.rsplit('-',1)[1]))
             contact(paths,args.output/f'plate-{plate}-{family}-eigenmodes.png',columns=4)
+    contact(sorted(args.input.glob('eigen-??.pgm')),args.output/'A1-frozen-eigenmodes.png',columns=4)
     for name in ['gate-a.csv','poisson.csv','hierarchy.csv',
                  'component-occupancy.csv','component-correlation.csv','regional-modes.csv','regional-fits.csv','regional-boundaries.csv','transition-curves.csv','transition-solves.csv']:
         path=args.input/name

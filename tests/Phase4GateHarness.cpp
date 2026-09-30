@@ -6,6 +6,7 @@
 #include "core/RegionalEigenField.h"
 #include "core/SparseTransitionField.h"
 #include "Phase4BarrierAblation.h"
+#include "Phase4ResearchSnapshot.h"
 
 #include <algorithm>
 #include <array>
@@ -199,6 +200,7 @@ void writeComponentDiagnostics(
   }
 }
 } // namespace
+#include "Phase4ComparativePipeline.h"
 
 int main(int argc, char **argv) {
   try {
@@ -251,9 +253,17 @@ int main(int argc, char **argv) {
       params.plates[size_t(donor)].weight =
           argc > 15 ? std::stof(argv[15]) : 1.0f;
     }
-    auto result = pigment::buildPhase4AutomaticPlates(
-        static_cast<const pigment::OwnedYabPlanes &>(yab).view(), params, {});
+    bool comparative=std::string(argv[argc-1])=="--comparative-pipeline";
+    if(comparative && !std::filesystem::exists(outputDir/"source.ppm"))std::filesystem::copy_file(argv[1],outputDir/"source.ppm");
+    auto cachePath=outputDir/"shared-upstream.snapshot";
+    auto cacheKey=research::key(static_cast<const pigment::OwnedYabPlanes&>(yab).view(),params);
+    bool cached=comparative && std::filesystem::exists(cachePath);
+    pigment::Phase4AutomaticResult result(bounds,params.latentCount,params.plateCount);
+    pigment::Phase4RegionHierarchy hierarchy;
+    if(cached)research::loadSnapshot(cachePath,cacheKey,result,hierarchy);
+    else result=pigment::buildPhase4AutomaticPlates(static_cast<const pigment::OwnedYabPlanes &>(yab).view(),params,{});
     const auto &constant = result;
+    if(!cached) {
     for (int i = 0; i < constant.latent.spectralModeCount(); ++i) {
       std::ostringstream name;
       name << "eigen-" << std::setw(2) << std::setfill('0') << i << ".pgm";
@@ -313,7 +323,7 @@ int main(int argc, char **argv) {
                 << constant.diagnostics.fullResolutionReconstructionError << '\n';
       return 0;
     }
-    auto hierarchy = pigment::buildPhase4RegionHierarchy(
+    hierarchy = pigment::buildPhase4RegionHierarchy(
         static_cast<const pigment::OwnedYabPlanes &>(yab).view(),
         constant.plates, params);
     writePgm(
@@ -340,6 +350,10 @@ int main(int argc, char **argv) {
       writePgm(outputDir / (prefix + "-ab-retained.pgm"),
                plateHierarchy.abRetainedBoundaries.view());
     }
+    }
+    if(comparative){if(!cached)research::saveSnapshot(cachePath,cacheKey,constant,hierarchy);
+      research::comparePipeline(outputDir,std::filesystem::path(argv[1]).stem().string(),static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,hierarchy,params,transform);
+      std::cout<<"PHASE4_COMPARATIVE cache="<<(cached?"reused":"created")<<" output="<<outputDir<<'\n';return 0;}
     if (std::string(argv[argc - 1]).rfind("--hierarchy-sweep",0)==0) {
       // Reuse one frozen automatic solution; do not rerun spectral extraction
       // just to evaluate cuts of the plate-conditioned region trees.
