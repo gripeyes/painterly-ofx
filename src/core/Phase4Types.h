@@ -93,6 +93,7 @@ struct Phase4GateDiagnostics {
   float componentEffectiveRank = 0.0f;
   float hardPixelFraction = 0.0f;
   float appearanceSpatialVariation = 0.0f;
+  float fullResolutionReconstructionError = 0.0f;
   float publicReconstructionError = 0.0f;
   float publicPlateEffectiveRank = 0.0f;
   float maximumPublicPlateCorrelation = 0.0f;
@@ -104,12 +105,24 @@ struct Phase4GateDiagnostics {
   std::vector<float> componentMattingEnergy;
 };
 
+struct Phase4AppearanceDistribution {
+  std::array<double, 3> mean{};
+  std::array<double, 9> covariance{}; // row-major YAB covariance
+};
+
+struct Phase4AppearanceDistributionGrid {
+  int width = 0, height = 0, spacing = 32;
+  std::vector<std::vector<Phase4AppearanceDistribution>> components;
+};
+
 class LatentComponentSet {
 public:
   LatentComponentSet() = default;
   LatentComponentSet(RectI bounds, int count);
   RectI bounds() const noexcept { return bounds_; }
   int count() const noexcept { return count_; }
+  Phase4AppearanceDistributionGrid &distributions() noexcept { return distributions_; }
+  const Phase4AppearanceDistributionGrid &distributions() const noexcept { return distributions_; }
   FloatPlaneView alpha(int index) noexcept { return alpha_[index].view(); }
   ConstFloatPlaneView alpha(int index) const noexcept {
     return alpha_[index].view();
@@ -150,6 +163,7 @@ public:
 private:
   RectI bounds_{};
   int count_ = 0;
+  Phase4AppearanceDistributionGrid distributions_;
   std::vector<OwnedPlane> alpha_;
   std::vector<OwnedYabPlanes> appearance_;
   std::vector<OwnedPlane> spectralModes_;

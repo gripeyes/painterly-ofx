@@ -438,87 +438,115 @@ struct ComponentRecovery {
 std::vector<std::vector<Sample>> buildSpatialAppearances(
     const AnalysisImage &image, const SparseAffinityGraph &graph,
     const std::vector<float> &alpha, const std::vector<Sample> &globalMean,
-    const std::vector<float> &globalVariance, int componentCount,
-    Phase4GateDiagnostics &diagnostics) {
+    int componentCount, Phase4GateDiagnostics &diagnostics,
+    Phase4AppearanceDistributionGrid &retained,
+    const ExecutionContext &execution) {
   const int n = graph.nodeCount();
-  std::vector<std::vector<Sample>> localMean(componentCount,
-                                             std::vector<Sample>(n));
-  std::vector<std::vector<float>> localVariance(componentCount,
-                                                std::vector<float>(n));
-
-  // Approximate Aksoy-style local layer distributions on the existing
-  // information-flow neighborhood.  Signed W_CMF remains a reconstruction
-  // operator; distribution statistics use only the non-negative F capacity.
-  for (int component = 0; component < componentCount; ++component)
-    for (int p = 0; p < n; ++p) {
-      const float centerAlpha = alpha[size_t(component) * n + p];
-      float weightSum = 1.0e-4f + centerAlpha;
-      Sample mean = mul(image.pixels[p], centerAlpha);
-      for (int edgeIndex = graph.rowOffsets[p];
-           edgeIndex < graph.rowOffsets[p + 1]; ++edgeIndex) {
-        const auto &edge = graph.edges[edgeIndex];
-        // Local appearance cells exclude the deliberately non-local F links.
-        if (edge.physicalDistance > 2.0f)
-          continue;
-        const float weight =
-            edge.weight * alpha[size_t(component) * n + edge.target];
-        mean = add(mean, mul(image.pixels[edge.target], weight));
-        weightSum += weight;
-      }
-      if (weightSum <= 2.0e-4f) {
-        localMean[component][p] = globalMean[component];
-        localVariance[component][p] = globalVariance[component];
-        continue;
-      }
-      mean = mul(mean, 1.0f / weightSum);
-      float variance =
-          centerAlpha * distance2(image.pixels[p], mean, {1, 1, 1});
-      for (int edgeIndex = graph.rowOffsets[p];
-           edgeIndex < graph.rowOffsets[p + 1]; ++edgeIndex) {
-        const auto &edge = graph.edges[edgeIndex];
-        if (edge.physicalDistance > 2.0f)
-          continue;
-        const float weight =
-            edge.weight * alpha[size_t(component) * n + edge.target];
-        variance +=
-            weight * distance2(image.pixels[edge.target], mean, {1, 1, 1});
-      }
-      localMean[component][p] = mean;
-      localVariance[component][p] = std::max(1.0e-6f, variance / weightSum);
+  struct Distribution {
+    Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d covariance = Eigen::Matrix3d::Identity();
+  };
+  auto color = [&](int p) {
+    const auto &v = image.pixels[size_t(p)];
+    return Eigen::Vector3d(v.y,v.a,v.b);
+  };
+  // Overlapping local color-distribution cells, not pixel/alpha smoothing.
+  // The prior carries a full YAB covariance rather than one scalar variance.
+  // Alphas and their recovery are fixed throughout this conditional solve.
+  constexpr int spacing = 32, radius = 32;
+  const int cols = (image.width-1)/spacing+2;
+  const int rows = (image.height-1)/spacing+2;
+  std::vector<std::vector<Distribution>> cells(
+      size_t(componentCount), std::vector<Distribution>(size_t(cols)*rows));
+  auto scale = robustScale(image.pixels);
+  Eigen::Vector3d floor(1e-5*scale.y*scale.y+1e-8,
+                        1e-5*scale.a*scale.a+1e-8,
+                        1e-5*scale.b*scale.b+1e-8);
+  for(int c=0;c<componentCount;++c) {
+    if(execution.cancelled()) throw std::runtime_error("Phase 4 appearance cancelled");
+    double globalMass=0;
+    Eigen::Matrix3d globalMoment=Eigen::Matrix3d::Zero();
+    Eigen::Vector3d center(globalMean[c].y,globalMean[c].a,globalMean[c].b);
+    for(int p=0;p<n;++p) {
+      double w=alpha[size_t(c)*n+p];Eigen::Vector3d d=color(p)-center;
+      globalMass+=w;globalMoment+=w*d*d.transpose();
     }
-
-  std::vector<std::vector<Sample>> appearance(componentCount,
-                                              std::vector<Sample>(n));
-  double reconstructionError = 0.0, spatialVariation = 0.0;
-  for (int p = 0; p < n; ++p) {
-    Sample mixed{};
-    float correctionDenominator = 0.0f;
-    for (int component = 0; component < componentCount; ++component) {
-      const float ownership = alpha[size_t(component) * n + p];
-      mixed = add(mixed, mul(localMean[component][p], ownership));
-      correctionDenominator += ownership * localVariance[component][p];
+    Eigen::Matrix3d prior=globalMoment/std::max(1e-12,globalMass);
+    prior.diagonal()+=floor;
+    for(int cy=0;cy<rows;++cy) for(int cx=0;cx<cols;++cx) {
+      const int x=std::min(image.width-1,cx*spacing);
+      const int y=std::min(image.height-1,cy*spacing);
+      double mass=0;
+      Eigen::Vector3d sum=Eigen::Vector3d::Zero();
+      Eigen::Matrix3d second=Eigen::Matrix3d::Zero();
+      for(int yy=std::max(0,y-radius);yy<std::min(image.height,y+radius+1);++yy)
+        for(int xx=std::max(0,x-radius);xx<std::min(image.width,x+radius+1);++xx) {
+          int p=yy*image.width+xx;double w=alpha[size_t(c)*n+p];
+          auto v=color(p);mass+=w;sum+=w*v;second+=w*v*v.transpose();
+        }
+      auto &cell=cells[size_t(c)][size_t(cy)*cols+cx];
+      if(mass<1e-6) {cell.mean=center;cell.covariance=prior;continue;}
+      cell.mean=sum/mass;
+      Eigen::Matrix3d covariance=second/mass-cell.mean*cell.mean.transpose();
+      // Roundoff must not turn a distribution covariance indefinite.
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(covariance);
+      cell.covariance=eig.eigenvectors()*
+          eig.eigenvalues().cwiseMax(0.0).asDiagonal()*eig.eigenvectors().transpose();
+      cell.covariance.diagonal()+=floor;
     }
-    const Sample residual{image.pixels[p].y - mixed.y,
-                          image.pixels[p].a - mixed.a,
-                          image.pixels[p].b - mixed.b};
-    Sample check{};
-    for (int component = 0; component < componentCount; ++component) {
-      float correction = localVariance[component][p] /
-                         std::max(kEpsilon, correctionDenominator);
-      appearance[component][p] =
-          add(localMean[component][p], mul(residual, correction));
-      const float ownership = alpha[size_t(component) * n + p];
-      check = add(check, mul(appearance[component][p], ownership));
-      spatialVariation +=
-          ownership *
-          distance2(appearance[component][p], globalMean[component], {1, 1, 1});
-    }
-    reconstructionError += distance2(check, image.pixels[p], {1, 1, 1});
   }
-  diagnostics.appearanceUnmixingError =
-      std::sqrt(float(reconstructionError / std::max(1, n)));
-  diagnostics.appearanceSpatialVariation =
-      std::sqrt(float(spatialVariation / std::max(1, n)));
+  retained.width=cols;retained.height=rows;retained.spacing=spacing;
+  retained.components.resize(size_t(componentCount));
+  for(int c=0;c<componentCount;++c) {
+    auto &out=retained.components[size_t(c)];out.resize(size_t(cols)*rows);
+    for(size_t p=0;p<out.size();++p) {
+      const auto &d=cells[size_t(c)][p];
+      for(int k=0;k<3;++k) out[p].mean[size_t(k)]=d.mean[k];
+      for(int r=0;r<3;++r) for(int k=0;k<3;++k)
+        out[p].covariance[size_t(r)*3+k]=d.covariance(r,k);
+    }
+  }
+  std::vector<std::vector<Sample>> appearance(
+      static_cast<size_t>(componentCount),std::vector<Sample>(static_cast<size_t>(n)));
+  double reconstructionError=0,spatialVariation=0;
+  std::vector<Distribution> local{size_t(componentCount)};
+  for(int p=0;p<n;++p) {
+    if((p&4095)==0 && execution.cancelled())
+      throw std::runtime_error("Phase 4 appearance cancelled");
+    int x=p%image.width,y=p/image.width,cx=x/spacing,cy=y/spacing;
+    double tx=double(x%spacing)/spacing,ty=double(y%spacing)/spacing;
+    Eigen::Vector3d mixture=Eigen::Vector3d::Zero();
+    Eigen::Matrix3d mixtureCovariance=Eigen::Matrix3d::Zero();
+    for(int c=0;c<componentCount;++c) {
+      auto &d=local[size_t(c)];
+      d.mean.setZero();d.covariance.setZero();
+      for(int oy=0;oy<2;++oy) for(int ox=0;ox<2;++ox) {
+        double w=(ox?tx:1-tx)*(oy?ty:1-ty);
+        const auto &cell=cells[size_t(c)][size_t(cy+oy)*cols+cx+ox];
+        d.mean+=w*cell.mean;d.covariance+=w*cell.covariance;
+      }
+      double a=alpha[size_t(c)*n+p];
+      mixture+=a*d.mean;mixtureCovariance+=a*d.covariance;
+    }
+    // Fixed-alpha Gaussian color refinement:
+    // min sum_i alpha_i (C_i-mu_i)^T Sigma_i^-1 (C_i-mu_i)
+    // subject to sum_i alpha_i C_i = source.
+    // C_i = mu_i + Sigma_i (sum_j alpha_j Sigma_j)^-1 residual.
+    // This is the conditional color-unmixing energy, not source copies or
+    // confidence fallback. It preserves HDR and negative values unclipped.
+    Eigen::Vector3d multiplier=mixtureCovariance.ldlt().solve(color(p)-mixture);
+    Eigen::Vector3d check=Eigen::Vector3d::Zero();
+    for(int c=0;c<componentCount;++c) {
+      Eigen::Vector3d v=local[size_t(c)].mean+local[size_t(c)].covariance*multiplier;
+      appearance[size_t(c)][size_t(p)]={float(v[0]),float(v[1]),float(v[2])};
+      double a=alpha[size_t(c)*n+p];check+=a*v;
+      Eigen::Vector3d mean(globalMean[c].y,globalMean[c].a,globalMean[c].b);
+      spatialVariation+=a*(v-mean).squaredNorm();
+    }
+    reconstructionError+=(check-color(p)).squaredNorm();
+  }
+  diagnostics.appearanceUnmixingError=float(std::sqrt(reconstructionError/std::max(1,n)));
+  diagnostics.appearanceSpatialVariation=float(std::sqrt(spatialVariation/std::max(1,n)));
   return appearance;
 }
 
@@ -998,8 +1026,8 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
     latentVariance[c] =
         std::max(1e-5f, latentVariance[c] / std::max(kEpsilon, latentMass[c]));
   auto appearance = buildSpatialAppearances(
-      analysis, result.analysisGraph, alpha, latentMean, latentVariance,
-      params.latentCount, result.diagnostics);
+      analysis, result.analysisGraph, alpha, latentMean,
+      params.latentCount, result.diagnostics, result.latent.distributions(), execution);
   auto &assign = result.plates.latentAssignments();
   assign =
       groupLatents(analysis, alpha, latentMean, latentVariance, basis, params);
@@ -1018,7 +1046,14 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
         value = add(value, mul(appearance[c][p], w));
       }
       plateAlpha[i][p] = pa;
-      plateAppearance[i][p] = mul(value, 1 / std::max(kEpsilon, pa));
+      // Appearance has no reliable conditional estimate when a plate is
+      // numerically absent. Keep a finite contextual source value there;
+      // alpha stays unchanged and the correction is bounded by epsilon.
+      // Dividing a tiny contribution by a floored denominator instead made
+      // absent plates approach black and exposed holes under Weight edits.
+      plateAppearance[i][p] = pa > kEpsilon
+                                  ? mul(value, 1 / pa)
+                                  : analysis.pixels[p];
     }
 
   Eigen::MatrixXd publicGram =
@@ -1121,6 +1156,61 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
         po.b.at(x, y) = app.b;
       }
     }
+  // Lift colors under the original full-resolution source constraint.
+  // Independent interpolation of alpha and color does not preserve their
+  // product and formerly returned an analysis-resolution photograph.
+  // This is fixed-alpha color refinement, never occupancy/confidence fallback.
+  double fullError = 0;
+  const auto &grid=result.latent.distributions();
+  std::vector<Eigen::Matrix3d> covariances{size_t(params.latentCount)};
+  for(int y=b.y1;y<b.y2;++y) for(int x=b.x1;x<b.x2;++x) {
+    if(x==b.x1 && execution.cancelled())
+      throw std::runtime_error("Phase 4 full-resolution appearance cancelled");
+    double ax=std::clamp((double(x-b.x1)+.5)*analysis.width/b.width()-.5,
+                         0.0,double(analysis.width-1));
+    double ay=std::clamp((double(y-b.y1)+.5)*analysis.height/b.height()-.5,
+                         0.0,double(analysis.height-1));
+    int cx=int(ax)/grid.spacing,cy=int(ay)/grid.spacing;
+    double tx=(ax-cx*grid.spacing)/grid.spacing,ty=(ay-cy*grid.spacing)/grid.spacing;
+    Eigen::Vector3d mixture=Eigen::Vector3d::Zero();
+    Eigen::Matrix3d combined=Eigen::Matrix3d::Zero();
+    for(int c=0;c<params.latentCount;++c) {
+      auto v=result.latent.appearance(c);
+      double a=result.latent.alpha(c).at(x,y);
+      mixture+=a*Eigen::Vector3d(v.y.at(x,y),v.a.at(x,y),v.b.at(x,y));
+      auto &cov=covariances[size_t(c)];cov.setZero();
+      for(int oy=0;oy<2;++oy) for(int ox=0;ox<2;++ox) {
+        double w=(ox?tx:1-tx)*(oy?ty:1-ty);
+        const auto &d=grid.components[size_t(c)][size_t(cy+oy)*grid.width+cx+ox];
+        for(int r=0;r<3;++r) for(int k=0;k<3;++k)
+          cov(r,k)+=w*d.covariance[size_t(r)*3+k];
+      }
+      combined+=a*cov;
+    }
+    Eigen::Vector3d original(source.y.at(x,y),source.a.at(x,y),source.b.at(x,y));
+    Eigen::Vector3d correction=combined.ldlt().solve(original-mixture);
+    for(int c=0;c<params.latentCount;++c) {
+      auto v=result.latent.appearance(c);Eigen::Vector3d d=covariances[size_t(c)]*correction;
+      v.y.at(x,y)+=float(d[0]);v.a.at(x,y)+=float(d[1]);v.b.at(x,y)+=float(d[2]);
+    }
+    Eigen::Vector3d check=Eigen::Vector3d::Zero();
+    for(int i=0;i<params.plateCount;++i) {
+      Eigen::Vector3d value=Eigen::Vector3d::Zero();double pa=0;
+      for(int c=0;c<params.latentCount;++c) {
+        double w=result.latent.alpha(c).at(x,y)*assign[size_t(c)*params.plateCount+i];
+        auto v=result.latent.appearance(c);pa+=w;
+        value+=w*Eigen::Vector3d(v.y.at(x,y),v.a.at(x,y),v.b.at(x,y));
+      }
+      auto out=result.plates.appearance(i);
+      Eigen::Vector3d v=pa>kEpsilon?Eigen::Vector3d(value/pa):original;
+      out.y.at(x,y)=float(v[0]);out.a.at(x,y)=float(v[1]);out.b.at(x,y)=float(v[2]);
+      check+=result.plates.alpha(i).at(x,y)*v;
+    }
+    double error=(check-original).squaredNorm();fullError+=error;
+    result.latent.reconstructionError().at(x,y)=float(std::sqrt(error));
+  }
+  result.diagnostics.fullResolutionReconstructionError=
+      float(std::sqrt(fullError/std::max(1,b.width()*b.height())));
   result.diagnostics.componentsFinite =
       std::isfinite(result.diagnostics.meanEffectiveComponents);
   result.diagnostics.appearanceFinite =
