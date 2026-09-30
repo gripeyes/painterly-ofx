@@ -348,6 +348,83 @@ void primitiveGradientSurvival() {
         "solid qualification changes analysis only, not approved gradient survival");
 }
 
+void interiorBroadForm() {
+  pigment::RectI bounds{0,0,96,96};
+  pigment::OwnedYabPlanes image(bounds);
+  pigment::PublicPlateSet plates(bounds,4);
+  pigment::Phase4RegionHierarchy hierarchy;
+  hierarchy.bounds=bounds;
+  hierarchy.atomicRegion.assign(96*96,0);
+  hierarchy.atomicRegionCount=1;
+  std::vector<float> form(96*96);
+  constexpr double pi=3.141592653589793;
+  for(int i=0;i<4;++i) {
+    hierarchy.plates.emplace_back(bounds);
+    auto &h=hierarchy.plates.back();
+    h.yChunk.assign(96*96,0);h.abChunk=h.yChunk;
+    h.yChunkCount=h.abChunkCount=1;
+    h.yEdgeX.assign(96*96,0);h.yEdgeY=h.yEdgeX;
+    h.abEdgeX=h.yEdgeX;h.abEdgeY=h.yEdgeX;
+    auto app=plates.appearance(i);
+    for(int y=0;y<96;++y) for(int x=0;x<96;++x) {
+      double fx=x/95.0,fy=y/95.0;
+      float broad=float(-.7+2.6*std::sin(pi*fx)*std::sin(pi*fy)+
+                       .7*std::sin(2*pi*fx)*std::sin(pi*fy));
+      form[size_t(y)*96+x]=broad;
+      float value=broad+(((x+y)&1)?-.02f:.02f)+.015f*std::sin(float(2*pi*x/9));
+      image.view().y.at(x,y)=app.y.at(x,y)=value;
+      app.a.at(x,y)=app.b.at(x,y)=0;
+      plates.alpha(i).at(x,y)=.25f;
+      plates.supportY(i).at(x,y)=plates.supportAB(i).at(x,y)=1;
+    }
+  }
+  pigment::Phase4Params params;
+  params.gradientComplexity=.05f;
+  auto source=static_cast<const pigment::OwnedYabPlanes &>(image).view();
+  pigment::Phase4BroadFormOptions disabled;disabled.enabled=false;
+  auto baseline=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},disabled);
+  pigment::Phase4BroadFormOptions enabled;enabled.enabled=true;
+  auto constrained=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},enabled);
+  auto b=static_cast<const pigment::OwnedYabPlanes &>(baseline.plateAppearance[0]).view();
+  auto c=static_cast<const pigment::OwnedYabPlanes &>(constrained.plateAppearance[0]).view();
+  double oldError=0,newError=0,oldTexture=0,newTexture=0;
+  for(int y=16;y<80;++y) for(int x=16;x<80;++x) {
+    float reference=form[size_t(y)*96+x];
+    oldError+=std::pow(b.y.at(x,y)-reference,2);
+    newError+=std::pow(c.y.at(x,y)-reference,2);
+    // Second differences distinguish known analytical broad form from texture.
+    double exact=form[size_t(y)*96+x-1]-2*reference+form[size_t(y)*96+x+1];
+    oldTexture+=std::pow(source.y.at(x-1,y)-2*source.y.at(x,y)+source.y.at(x+1,y)-exact,2);
+    newTexture+=std::pow(c.y.at(x-1,y)-2*c.y.at(x,y)+c.y.at(x+1,y)-exact,2);
+    check(c.a.at(x,y)==0 && c.b.at(x,y)==0,"interior constraints preserve neutral AB");
+  }
+  check(newError<.65*oldError,"regional interior constraints improve curved broad form at strong simplification");
+  check(newTexture<.1*oldTexture,"broad constraints do not restore oscillatory source description");
+  check(constrained.solver[0][0].broadConstraints>0 &&
+        constrained.solver[0][0].converged,
+        "interior moment constraints participate in converged bounded solve");
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    if(x==0 || y==0 || x==95 || y==95)
+      check(c.y.at(x,y)==source.y.at(x,y),"interior moments leave retained contour values bit-exact");
+  auto onlyY=pigment::Phase4BroadFormOptions{};
+  onlyY.enabled=true;
+  onlyY.strengthY*=2;
+  auto changed=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},onlyY);
+  auto next=static_cast<const pigment::OwnedYabPlanes &>(changed.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    check(next.a.at(x,y)==c.a.at(x,y) && next.b.at(x,y)==c.b.at(x,y),
+          "Y interior constraint strength does not alter AB reconstruction");
+  auto repeat=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},enabled);
+  auto repeated=static_cast<const pigment::OwnedYabPlanes &>(repeat.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    check(repeated.y.at(x,y)==c.y.at(x,y),"interior constraint sites and solve are deterministic");
+  params.lumaChunkScale=0;params.chromaChunkScale=0;
+  auto bypass=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},enabled);
+  auto untouched=static_cast<const pigment::OwnedYabPlanes &>(bypass.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    check(untouched.y.at(x,y)==source.y.at(x,y),"zero chunk scale bypasses interior constraints exactly");
+}
+
 void renderIdentityAndAlpha() {
   pigment::RectI b{-2, 3, 18, 17};
   int stride = b.width() * 4 + 3;
@@ -385,6 +462,7 @@ int main() {
   automaticPlates();
   regionHierarchy();
   primitiveGradientSurvival();
+  interiorBroadForm();
   renderIdentityAndAlpha();
   if (failures)
     return 1;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <queue>
 #include <stdexcept>
 #include <vector>
 
@@ -23,18 +24,21 @@ struct Model {
 };
 struct ChannelResult {
   std::vector<float> values, gradient, model, error;
+  std::vector<float> broadTarget, broadInfluence;
   Phase4PoissonDiagnostics solver;
 };
 
 ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
     ConstFloatPlaneView support, const std::vector<int>&chunks, int chunkCount,
     const std::vector<float>&edgeX, const std::vector<float>&edgeY,
-    float chunkScale, float complexity, const ExecutionContext&execution) {
+    float chunkScale, float complexity, const ExecutionContext&execution,
+    bool interiorEnabled, float interiorSpacing, float interiorStrength) {
   RectI b=automatic.bounds;
   int width=b.width(),height=b.height(),count=width*height;
   ChannelResult out;
   out.values.resize(size_t(count));out.gradient.assign(size_t(count),0);
   out.model.assign(size_t(count),0);out.error.assign(size_t(count),0);
+  out.broadTarget.assign(size_t(count),0);out.broadInfluence.assign(size_t(count),0);
   std::vector<double> input(size_t(count),0),coverage(size_t(count),0);
   for(int y=0;y<height;++y) for(int x=0;x<width;++x) {
     int p=y*width+x;
@@ -164,6 +168,93 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
     out.model[size_t(p)]=float(selected[size_t(c)])/3;
     out.error[size_t(p)]=errors[size_t(c)];
   }
+  struct Moment {
+    std::vector<std::pair<int,double>> weights; // normalized supported region
+    double target=0,adjustedTarget=0,strength=0;
+  };
+  std::vector<Moment> moments;
+  if(interiorEnabled && interiorStrength>0) {
+    int spacing=std::max(8,int(std::lround(interiorSpacing)));
+    int radius=std::max(4,int(std::lround(.375*spacing)));
+    std::vector<int> distance(size_t(count),0),nearest(size_t(count),0);
+    constexpr int infinity=std::numeric_limits<int>::max()/4;
+    auto neighbors=[&](int p,auto fn) {
+      int x=p%width,y=p/width;
+      for(int q:{x>0?p-1:-1,x+1<width?p+1:-1,y>0?p-width:-1,y+1<height?p+width:-1})
+        if(q>=0 && chunks[size_t(q)]==chunks[size_t(p)] && coverage[size_t(q)]>=kSupport) fn(q);
+    };
+    for(const auto &domain:pixels) {
+      if(domain.size()<size_t(spacing*spacing/2)) continue;
+      if(execution.cancelled()) throw std::runtime_error("Phase 4 broad-form analysis cancelled");
+      std::queue<int> queue;
+      for(int p:domain) {
+        distance[size_t(p)]=fixed[size_t(p)]?0:infinity;
+        nearest[size_t(p)]=infinity;
+        if(fixed[size_t(p)]) queue.push(p);
+      }
+      while(!queue.empty()) {
+        int p=queue.front();queue.pop();
+        neighbors(p,[&](int q) {if(distance[size_t(q)]>distance[size_t(p)]+1) {
+          distance[size_t(q)]=distance[size_t(p)]+1;queue.push(q);
+        }});
+      }
+      // Source/barrier-driven farthest sites, not a rectangular control grid.
+      // Patch boundaries are measurements only, never output solve barriers.
+      for(int site=0;site<64;++site) {
+        int seed=-1,best=-1;
+        for(int p:domain) if(distance[size_t(p)]>=radius && !fixed[size_t(p)] &&
+                                 coverage[size_t(p)]>=.1) {
+          int score=site==0?distance[size_t(p)]:nearest[size_t(p)];
+          if(score>best) {seed=p;best=score;}
+        }
+        if(seed<0 || (site>0 && best<spacing)) break;
+        std::vector<int> patch;
+        for(int p:domain) distance[size_t(p)]=infinity;
+        distance[size_t(seed)]=0;queue.push(seed);
+        while(!queue.empty()) {
+          int p=queue.front();queue.pop();
+          int d=distance[size_t(p)];
+          nearest[size_t(p)]=std::min(nearest[size_t(p)],d);
+          if(d<=radius) patch.push_back(p);
+          neighbors(p,[&](int q) {if(distance[size_t(q)]>d+1) {
+            distance[size_t(q)]=d+1;queue.push(q);
+          }});
+        }
+        // Restore depth-to-contour, used for every candidate's confidence.
+        for(int p:domain) {
+          distance[size_t(p)]=fixed[size_t(p)]?0:infinity;
+          if(fixed[size_t(p)]) queue.push(p);
+        }
+        while(!queue.empty()) {
+          int p=queue.front();queue.pop();
+          neighbors(p,[&](int q) {if(distance[size_t(q)]>distance[size_t(p)]+1) {
+            distance[size_t(q)]=distance[size_t(p)]+1;queue.push(q);
+          }});
+        }
+        double weight=0,target=0;
+        for(int p:patch) {weight+=coverage[size_t(p)];target+=coverage[size_t(p)]*input[size_t(p)];}
+        // Do not let near-absent appearance become a trusted form anchor.
+        if(weight<.1*patch.size() || patch.size()<size_t(radius*radius)) continue;
+        Moment moment;
+        moment.target=target/weight;
+        moment.adjustedTarget=moment.target;
+        // A large-scale average constraint, NOT a pixelwise source screen.
+        // Integrating the gradient energy over a region gives area/radius².
+        moment.strength=interiorStrength*weight/(radius*radius);
+        for(int p:patch) {
+          double w=coverage[size_t(p)]/weight;
+          out.broadTarget[size_t(p)]+=float(w*moment.target);
+          out.broadInfluence[size_t(p)]+=float(w);
+          if(fixed[size_t(p)]) moment.adjustedTarget-=w*input[size_t(p)];
+          else moment.weights.emplace_back(p,w);
+        }
+        if(!moment.weights.empty()) moments.push_back(std::move(moment));
+      }
+    }
+  }
+  out.solver.broadConstraints=int(moments.size());
+  for(int p=0;p<count;++p) if(out.broadInfluence[size_t(p)]>0)
+    out.broadTarget[size_t(p)]/=out.broadInfluence[size_t(p)];
   auto appendEdge=[&](int p,int q,float level,double &weight) {
     if(chunks[size_t(p)]!=chunks[size_t(q)] || coverage[size_t(p)]<kSupport || coverage[size_t(q)]<kSupport) return;
     weight=std::sqrt(coverage[size_t(p)]*coverage[size_t(q)]);
@@ -193,11 +284,18 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
     if(!fixed[size_t(p)] && fixed[size_t(q)]) rhs[size_t(p)]+=w*input[size_t(q)];
     if(!fixed[size_t(q)] && fixed[size_t(p)]) rhs[size_t(q)]+=w*input[size_t(p)];
   });
+  for(const auto &moment:moments) for(auto [p,w]:moment.weights)
+    rhs[size_t(p)]+=moment.strength*w*moment.adjustedTarget;
   auto apply=[&](const std::vector<double>&v,std::vector<double>&a) {
     for(int p=0;p<count;++p) a[size_t(p)]=fixed[size_t(p)]?0:diag[size_t(p)]*v[size_t(p)];
     edges([&](int p,int q,double w) {if(!fixed[size_t(p)]&&!fixed[size_t(q)]) {
       a[size_t(p)]-=w*v[size_t(q)];a[size_t(q)]-=w*v[size_t(p)];
     }});
+    for(const auto &moment:moments) {
+      double average=0;
+      for(auto [p,w]:moment.weights) average+=w*v[size_t(p)];
+      for(auto [p,w]:moment.weights) a[size_t(p)]+=moment.strength*w*average;
+    }
   };
   auto dot=[&](const std::vector<double>&a,const std::vector<double>&v) {
     double s=0;for(int p=0;p<count;++p) if(!fixed[size_t(p)]) s+=a[size_t(p)]*v[size_t(p)];return s;
@@ -209,7 +307,16 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
   edges([&](int p,int q,double w) {if(!fixed[size_t(p)]&&!fixed[size_t(q)]) {
     triplets.emplace_back(p,q,-w);triplets.emplace_back(q,p,-w);
   }});
-  Eigen::SparseMatrix<double> matrix(count,count);
+  // Auxiliary moment variables avoid a dense all-pairs patch matrix. The
+  // Schur complement is exactly A_poisson + Σ strength*m*m^T, still SPD.
+  for(size_t i=0;i<moments.size();++i) {
+    int auxiliary=count+int(i);
+    triplets.emplace_back(auxiliary,auxiliary,-1/moments[i].strength);
+    for(auto [p,w]:moments[i].weights) {
+      triplets.emplace_back(p,auxiliary,w);triplets.emplace_back(auxiliary,p,w);
+    }
+  }
+  Eigen::SparseMatrix<double> matrix(count+int(moments.size()),count+int(moments.size()));
   matrix.setFromTriplets(triplets.begin(),triplets.end());
   // The CPU gate uses a complete sparse factor as the PCG preconditioner.
   // This preserves the exact bounded operator while making solver error
@@ -220,9 +327,10 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
   if(preconditioner.info()!=Eigen::Success)
     throw std::runtime_error("Phase 4 Poisson preconditioner failed");
   auto precondition=[&](const std::vector<double>&residual,std::vector<double>&output) {
-    Eigen::Map<const Eigen::VectorXd> inputVector(residual.data(),count);
+    Eigen::VectorXd inputVector=Eigen::VectorXd::Zero(matrix.rows());
+    inputVector.head(count)=Eigen::Map<const Eigen::VectorXd>(residual.data(),count);
     Eigen::Map<Eigen::VectorXd> outputVector(output.data(),count);
-    outputVector=preconditioner.solve(inputVector);
+    outputVector=preconditioner.solve(inputVector).head(count);
   };
   std::vector<double> u=input,r(size_t(count),0),z(size_t(count),0),direction(size_t(count),0),ad(size_t(count),0);
   apply(u,ad);
@@ -251,6 +359,13 @@ ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
   apply(u,ad);for(int p=0;p<count;++p) r[size_t(p)]=fixed[size_t(p)]?0:rhs[size_t(p)]-ad[size_t(p)];
   out.solver.relativeResidual=std::sqrt(dot(r,r))/std::max(1e-14,initial);
   out.solver.converged=initial<1e-14 || out.solver.relativeResidual<=1e-5;
+  double after=0;
+  for(const auto &moment:moments) {
+    double c=0;
+    for(auto [p,w]:moment.weights) c+=w*u[size_t(p)];
+    after+=(c-moment.adjustedTarget)*(c-moment.adjustedTarget);
+  }
+  out.solver.broadResultRmse=std::sqrt(after/std::max(size_t(1),moments.size()));
   for(int p=0;p<count;++p) {out.values[size_t(p)]=float(u[size_t(p)]);
                            out.gradient[size_t(p)]=std::sqrt(out.gradient[size_t(p)]);}
   return out;
@@ -264,7 +379,8 @@ void copyChannel(const std::vector<float>&v,FloatPlaneView out) {
 
 Phase4ChunkSynthesis synthesizePhase4Chunks(ConstYabPlanes source,
     const PublicPlateSet &plates,const Phase4RegionHierarchy &hierarchy,
-    const Phase4Params &params,const ExecutionContext &execution) {
+    const Phase4Params &params,const ExecutionContext &execution,
+    const Phase4BroadFormOptions &broadForm) {
   (void)source;
   Phase4ChunkSynthesis result(hierarchy.bounds);
   for(int plate=0;plate<plates.count();++plate) {
@@ -273,17 +389,26 @@ Phase4ChunkSynthesis synthesizePhase4Chunks(ConstYabPlanes source,
     result.simplifiedGradient.emplace_back(hierarchy.bounds);
     result.primitiveSelection.emplace_back(hierarchy.bounds);
     result.fitError.emplace_back(hierarchy.bounds);
+    result.broadConstraintTargets.emplace_back(hierarchy.bounds);
+    result.broadConstraintInfluence.emplace_back(hierarchy.bounds);
     auto automatic=plates.appearance(plate);const auto &h=hierarchy.plates[size_t(plate)];
     auto y=synthesizeChannel(automatic.y,plates.supportY(plate),h.yChunk,h.yChunkCount,h.yEdgeX,h.yEdgeY,
-                             params.lumaChunkScale,params.gradientComplexity,execution);
+                             params.lumaChunkScale,params.gradientComplexity,execution,
+                             broadForm.enabled,broadForm.spacingY,broadForm.strengthY);
     auto a=synthesizeChannel(automatic.a,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
-                             params.chromaChunkScale,params.gradientComplexity,execution);
+                             params.chromaChunkScale,params.gradientComplexity,execution,
+                             broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB);
     auto b=synthesizeChannel(automatic.b,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
-                             params.chromaChunkScale,params.gradientComplexity,execution);
+                             params.chromaChunkScale,params.gradientComplexity,execution,
+                             broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB);
     result.solver.push_back({y.solver,a.solver,b.solver});
     auto out=result.plateAppearance.back().view();copyChannel(y.values,out.y);copyChannel(a.values,out.a);copyChannel(b.values,out.b);
     copyChannel(y.gradient,result.simplifiedGradient.back().view());
     copyChannel(y.model,result.primitiveSelection.back().view());copyChannel(y.error,result.fitError.back().view());
+    auto target=result.broadConstraintTargets.back().view();
+    copyChannel(y.broadTarget,target.y);copyChannel(a.broadTarget,target.a);copyChannel(b.broadTarget,target.b);
+    auto influence=result.broadConstraintInfluence.back().view();
+    copyChannel(y.broadInfluence,influence.y);copyChannel(a.broadInfluence,influence.a);copyChannel(b.broadInfluence,influence.b);
     auto sg=result.sourceGradient.back().view();
     for(int yy=hierarchy.bounds.y1;yy<hierarchy.bounds.y2;++yy) for(int x=hierarchy.bounds.x1;x<hierarchy.bounds.x2;++x) {
       int xp=std::min(hierarchy.bounds.x2-1,x+1),yp=std::min(hierarchy.bounds.y2-1,yy+1);

@@ -46,10 +46,20 @@ if __name__=='__main__':
                          ('plate-?-primitive.pgm','primitive-selection'),
                          ('plate-?-fit-error.pgm','fit-errors')]:
         contact(sorted(args.input.glob(pattern)),args.output/(name+'.png'))
-    for name in ['gate-a-reconstruction','synthesized-composite','pre-spill','post-spill']:
+    for pattern,name in [('plate-?-broad-y-influence.pgm','broad-y-influence'),
+                         ('plate-?-broad-ab-influence.pgm','broad-ab-influence')]:
+        contact(sorted(args.input.glob(pattern)),args.output/(name+'.png'))
+    for name in ['gate-a-reconstruction','synthesized-composite','pre-spill','post-spill','no-interior']:
         path=args.input/(name+'.ppm')
         if path.exists():
             Image.open(path).save(args.output/(name+'.png'))
+    paired=[args.input/(name+'.ppm') for name in
+            ['gate-a-reconstruction','no-interior','synthesized-composite']]
+    if all(p.exists() for p in paired):
+        contact(paired,args.output/'interior-comparison.png')
+    difference=args.input/'interior-difference.png'
+    if difference.exists():
+        Image.open(difference).save(args.output/difference.name)
     for name in ['gate-a.csv','poisson.csv','hierarchy.csv',
                  'component-occupancy.csv','component-correlation.csv']:
         path=args.input/name

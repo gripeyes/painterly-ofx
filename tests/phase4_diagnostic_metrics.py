@@ -87,7 +87,7 @@ def measure(directory):
     alpha /= np.maximum(1e-20, np.sum(alpha, axis=0))
     source = pfm(directory/'source-yab.pfm')
     output = pfm(directory/'synthesized-yab.pfm')
-    return {'alpha_precision':'8-bit saved diagnostic, renormalized',
+    result = {'alpha_precision':'8-bit saved diagnostic, renormalized',
             'automatic_interlayer_rms_yab':np.sqrt(np.mean(np.var(automatic, axis=0), axis=(0,1))).tolist(),
             'automatic':gradient_terms(alpha, automatic),
             'synthesized':gradient_terms(alpha, synthesized),
@@ -95,6 +95,18 @@ def measure(directory):
             'bands':band_metrics(source,output),
             'automatic_layer_min':np.min(automatic, axis=(1, 2)).tolist(),
             'automatic_layer_max':np.max(automatic, axis=(1, 2)).tolist()}
+    baseline = directory/'no-interior-yab.pfm'
+    if baseline.exists():
+        before = pfm(baseline)
+        result['without_interior'] = band_metrics(source, before)
+        result['interior_change_rmse_yab'] = np.sqrt(np.mean((output-before)**2, axis=(0,1))).tolist()
+        for channel in ['y','ab']:
+            masks=np.stack([np.asarray(Image.open(directory/(p.name[:7]+f'-broad-{channel}-influence.pgm')))>0
+                            for p in paths])
+            result[f'{channel}_moment_footprint_alpha_weighted_fraction']=float(np.mean(np.sum(alpha*masks,axis=0)))
+        # Presentation only: unclipped differences stay in the PFM files.
+        Image.fromarray(np.uint8(np.clip(.5+4*(output-source),0,1)*255)).save(directory/'interior-difference.png')
+    return result
 
 
 if __name__ == '__main__':

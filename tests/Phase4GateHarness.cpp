@@ -56,21 +56,22 @@ RgbImage readPpm(const std::string &path) {
 }
 
 void writePgm(const std::filesystem::path &path,
-              pigment::ConstFloatPlaneView field, bool signedField = false) {
+              pigment::ConstFloatPlaneView field, bool signedField = false,
+              bool normalizeField = false) {
   std::ofstream output(path, std::ios::binary);
   const auto b = field.bounds;
   output << "P5\n" << b.width() << ' ' << b.height() << "\n255\n";
   float scale = 1.0f;
-  if (signedField) {
+  if (signedField || normalizeField) {
     float maximum = 0;
     for (int y = b.y1; y < b.y2; ++y)
       for (int x = b.x1; x < b.x2; ++x)
         maximum = std::max(maximum, std::abs(field.at(x, y)));
-    scale = .5f / std::max(1e-8f, maximum);
+    scale = (signedField?.5f:1.0f) / std::max(1e-8f, maximum);
   }
   for (int y = b.y1; y < b.y2; ++y)
     for (int x = b.x1; x < b.x2; ++x) {
-      float value = signedField ? .5f + scale * field.at(x, y) : field.at(x, y);
+      float value = (signedField?.5f:0.0f) + scale * field.at(x, y);
       unsigned char byte = static_cast<unsigned char>(
           std::lround(255 * std::max(0.0f, std::min(1.0f, value))));
       output.write(reinterpret_cast<const char *>(&byte), 1);
@@ -389,21 +390,41 @@ int main(int argc, char **argv) {
                 << " output=" << outputDir << '\n';
       return 0;
     }
+    pigment::Phase4BroadFormOptions broadForm;
+    const auto experiment=std::string(argv[argc-1]);
+    broadForm.enabled=experiment=="--interior-experiment" || experiment=="--interior-strong";
+    if(experiment=="--interior-strong") {
+      broadForm.strengthY*=4; broadForm.strengthAB*=4;
+    }
+    if(std::string(argv[argc-1])=="--no-interior") broadForm.enabled=false;
+    if(broadForm.enabled) {
+      auto baselineOptions=broadForm;baselineOptions.enabled=false;
+      auto baseline=pigment::synthesizePhase4Chunks(
+          static_cast<const pigment::OwnedYabPlanes &>(yab).view(),
+          constant.plates,hierarchy,params,{},baselineOptions);
+      writeYabPfm(outputDir/"no-interior-yab.pfm",
+                 static_cast<const pigment::OwnedYabPlanes &>(baseline.preSpill).view());
+      pigment::OwnedPlane alpha(bounds,1);
+      writeAppearance(outputDir/"no-interior.ppm",
+                      static_cast<const pigment::OwnedYabPlanes &>(baseline.preSpill).view(),
+                      static_cast<const pigment::OwnedPlane &>(alpha).view(),transform);
+    }
     auto synthesis = pigment::synthesizePhase4Chunks(
         static_cast<const pigment::OwnedYabPlanes &>(yab).view(),
-        constant.plates, hierarchy, params);
+        constant.plates, hierarchy, params,{},broadForm);
     writeYabPfm(outputDir / "source-yab.pfm",
                 static_cast<const pigment::OwnedYabPlanes &>(yab).view());
     writeYabPfm(outputDir / "synthesized-yab.pfm",
                 static_cast<const pigment::OwnedYabPlanes &>(synthesis.preSpill).view());
     std::ofstream poisson(outputDir / "poisson.csv");
-    poisson << "plate,channel,iterations,relative_residual,converged\n";
+    poisson << "plate,channel,iterations,relative_residual,converged,broad_constraints,broad_result_rmse\n";
     bool converged = true;
     for (size_t i = 0; i < synthesis.solver.size(); ++i)
       for (int channel = 0; channel < 3; ++channel) {
         const auto &s = synthesis.solver[i][size_t(channel)];
         poisson << i << ',' << channel << ',' << s.iterations << ','
-                << s.relativeResidual << ',' << s.converged << '\n';
+                << s.relativeResidual << ',' << s.converged << ','
+                << s.broadConstraints << ',' << s.broadResultRmse << '\n';
         converged &= s.converged;
       }
     poisson.close();
@@ -419,6 +440,14 @@ int main(int argc, char **argv) {
                static_cast<const pigment::OwnedPlane &>(synthesis.sourceGradient[i]).view());
       writePgm(outputDir / (prefix + "-simplified-gradient.pgm"),
                static_cast<const pigment::OwnedPlane &>(synthesis.simplifiedGradient[i]).view());
+      const auto &target=synthesis.broadConstraintTargets[i];
+      const auto &influence=synthesis.broadConstraintInfluence[i];
+      writeYabPfm(outputDir/(prefix+"-broad-target-yab.pfm"),
+                  static_cast<const pigment::OwnedYabPlanes &>(target).view());
+      writePgm(outputDir/(prefix+"-broad-y-influence.pgm"),
+               static_cast<const pigment::OwnedYabPlanes &>(influence).view().y,false,true);
+      writePgm(outputDir/(prefix+"-broad-ab-influence.pgm"),
+               static_cast<const pigment::OwnedYabPlanes &>(influence).view().a,false,true);
     }
     pigment::OwnedPlane fullAlpha(bounds, 1.0f);
     writeAppearance(outputDir / "synthesized-composite.ppm",
