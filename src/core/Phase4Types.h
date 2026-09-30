@@ -92,6 +92,10 @@ struct Phase4GateDiagnostics {
   float meanComponentEntropy = 0.0f;
   float componentEffectiveRank = 0.0f;
   float hardPixelFraction = 0.0f;
+  float appearanceSpatialVariation = 0.0f;
+  float publicReconstructionError = 0.0f;
+  float publicPlateEffectiveRank = 0.0f;
+  float maximumPublicPlateCorrelation = 0.0f;
   bool eigenspaceFinite = true;
   bool componentsFinite = true;
   bool appearanceFinite = true;
@@ -101,53 +105,92 @@ struct Phase4GateDiagnostics {
 };
 
 class LatentComponentSet {
- public:
+public:
   LatentComponentSet() = default;
   LatentComponentSet(RectI bounds, int count);
   RectI bounds() const noexcept { return bounds_; }
   int count() const noexcept { return count_; }
   FloatPlaneView alpha(int index) noexcept { return alpha_[index].view(); }
-  ConstFloatPlaneView alpha(int index) const noexcept { return alpha_[index].view(); }
+  ConstFloatPlaneView alpha(int index) const noexcept {
+    return alpha_[index].view();
+  }
   YabPlanes appearance(int index) noexcept { return appearance_[index].view(); }
-  ConstYabPlanes appearance(int index) const noexcept { return appearance_[index].view(); }
+  ConstYabPlanes appearance(int index) const noexcept {
+    return appearance_[index].view();
+  }
   FloatPlaneView confidence() noexcept { return confidence_.view(); }
   ConstFloatPlaneView confidence() const noexcept { return confidence_.view(); }
-  FloatPlaneView reconstructionError() noexcept { return reconstructionError_.view(); }
-  ConstFloatPlaneView reconstructionError() const noexcept { return reconstructionError_.view(); }
-  FloatPlaneView spectralResidual() noexcept { return spectralResidual_.view(); }
-  ConstFloatPlaneView spectralResidual() const noexcept { return spectralResidual_.view(); }
+  FloatPlaneView reconstructionError() noexcept {
+    return reconstructionError_.view();
+  }
+  ConstFloatPlaneView reconstructionError() const noexcept {
+    return reconstructionError_.view();
+  }
+  FloatPlaneView spectralResidual() noexcept {
+    return spectralResidual_.view();
+  }
+  ConstFloatPlaneView spectralResidual() const noexcept {
+    return spectralResidual_.view();
+  }
   FloatPlaneView recoveryError() noexcept { return recoveryError_.view(); }
-  ConstFloatPlaneView recoveryError() const noexcept { return recoveryError_.view(); }
+  ConstFloatPlaneView recoveryError() const noexcept {
+    return recoveryError_.view();
+  }
   void allocateSpectralModes(int count);
-  int spectralModeCount() const noexcept { return static_cast<int>(spectralModes_.size()); }
-  FloatPlaneView spectralMode(int index) noexcept { return spectralModes_[index].view(); }
-  ConstFloatPlaneView spectralMode(int index) const noexcept { return spectralModes_[index].view(); }
- private:
+  int spectralModeCount() const noexcept {
+    return static_cast<int>(spectralModes_.size());
+  }
+  FloatPlaneView spectralMode(int index) noexcept {
+    return spectralModes_[index].view();
+  }
+  ConstFloatPlaneView spectralMode(int index) const noexcept {
+    return spectralModes_[index].view();
+  }
+
+private:
   RectI bounds_{};
   int count_ = 0;
   std::vector<OwnedPlane> alpha_;
   std::vector<OwnedYabPlanes> appearance_;
   std::vector<OwnedPlane> spectralModes_;
-  OwnedPlane confidence_, reconstructionError_, spectralResidual_, recoveryError_;
+  OwnedPlane confidence_, reconstructionError_, spectralResidual_,
+      recoveryError_;
 };
 
 class PublicPlateSet {
- public:
+public:
   PublicPlateSet() = default;
   PublicPlateSet(RectI bounds, int count);
   RectI bounds() const noexcept { return bounds_; }
   int count() const noexcept { return count_; }
   FloatPlaneView alpha(int index) noexcept { return alpha_[index].view(); }
-  ConstFloatPlaneView alpha(int index) const noexcept { return alpha_[index].view(); }
-  FloatPlaneView supportY(int index) noexcept { return supportY_[index].view(); }
-  ConstFloatPlaneView supportY(int index) const noexcept { return supportY_[index].view(); }
-  FloatPlaneView supportAB(int index) noexcept { return supportAB_[index].view(); }
-  ConstFloatPlaneView supportAB(int index) const noexcept { return supportAB_[index].view(); }
+  ConstFloatPlaneView alpha(int index) const noexcept {
+    return alpha_[index].view();
+  }
+  FloatPlaneView supportY(int index) noexcept {
+    return supportY_[index].view();
+  }
+  ConstFloatPlaneView supportY(int index) const noexcept {
+    return supportY_[index].view();
+  }
+  FloatPlaneView supportAB(int index) noexcept {
+    return supportAB_[index].view();
+  }
+  ConstFloatPlaneView supportAB(int index) const noexcept {
+    return supportAB_[index].view();
+  }
   YabPlanes appearance(int index) noexcept { return appearance_[index].view(); }
-  ConstYabPlanes appearance(int index) const noexcept { return appearance_[index].view(); }
-  std::vector<float>& latentAssignments() noexcept { return latentAssignments_; }
-  const std::vector<float>& latentAssignments() const noexcept { return latentAssignments_; }
- private:
+  ConstYabPlanes appearance(int index) const noexcept {
+    return appearance_[index].view();
+  }
+  std::vector<float> &latentAssignments() noexcept {
+    return latentAssignments_;
+  }
+  const std::vector<float> &latentAssignments() const noexcept {
+    return latentAssignments_;
+  }
+
+private:
   RectI bounds_{};
   int count_ = 0;
   std::vector<OwnedPlane> alpha_, supportY_, supportAB_;
@@ -156,7 +199,7 @@ class PublicPlateSet {
 };
 
 float phase4PlateEntropyCoefficient(float overlap) noexcept;
-float phase4SupportRadiusY(const Phase4Params& params) noexcept;
-float phase4SupportRadiusAB(const Phase4Params& params) noexcept;
+float phase4SupportRadiusY(const Phase4Params &params) noexcept;
+float phase4SupportRadiusAB(const Phase4Params &params) noexcept;
 
-}  // namespace pigment
+} // namespace pigment

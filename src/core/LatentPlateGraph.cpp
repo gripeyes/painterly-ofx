@@ -202,7 +202,7 @@ SparseAffinityGraph buildGraph(const AnalysisImage &image,
                          (ci.a * cj.a) / (scale.a * scale.a) +
                          (ci.b * cj.b) / (scale.b * scale.b);
         }
-      system(i, i) += 1e-1;
+        system(i, i) += 1e-1;
         system(i, mixtureCount) = system(mixtureCount, i) = 1;
         target[i] = (ci.y * image.pixels[p].y) / (scale.y * scale.y) +
                     (ci.a * image.pixels[p].a) / (scale.a * scale.a) +
@@ -434,6 +434,93 @@ struct ComponentRecovery {
   int count = 0;
   std::vector<float> values;
 };
+
+std::vector<std::vector<Sample>> buildSpatialAppearances(
+    const AnalysisImage &image, const SparseAffinityGraph &graph,
+    const std::vector<float> &alpha, const std::vector<Sample> &globalMean,
+    const std::vector<float> &globalVariance, int componentCount,
+    Phase4GateDiagnostics &diagnostics) {
+  const int n = graph.nodeCount();
+  std::vector<std::vector<Sample>> localMean(componentCount,
+                                             std::vector<Sample>(n));
+  std::vector<std::vector<float>> localVariance(componentCount,
+                                                std::vector<float>(n));
+
+  // Approximate Aksoy-style local layer distributions on the existing
+  // information-flow neighborhood.  Signed W_CMF remains a reconstruction
+  // operator; distribution statistics use only the non-negative F capacity.
+  for (int component = 0; component < componentCount; ++component)
+    for (int p = 0; p < n; ++p) {
+      const float centerAlpha = alpha[size_t(component) * n + p];
+      float weightSum = 1.0e-4f + centerAlpha;
+      Sample mean = mul(image.pixels[p], centerAlpha);
+      for (int edgeIndex = graph.rowOffsets[p];
+           edgeIndex < graph.rowOffsets[p + 1]; ++edgeIndex) {
+        const auto &edge = graph.edges[edgeIndex];
+        // Local appearance cells exclude the deliberately non-local F links.
+        if (edge.physicalDistance > 2.0f)
+          continue;
+        const float weight =
+            edge.weight * alpha[size_t(component) * n + edge.target];
+        mean = add(mean, mul(image.pixels[edge.target], weight));
+        weightSum += weight;
+      }
+      if (weightSum <= 2.0e-4f) {
+        localMean[component][p] = globalMean[component];
+        localVariance[component][p] = globalVariance[component];
+        continue;
+      }
+      mean = mul(mean, 1.0f / weightSum);
+      float variance =
+          centerAlpha * distance2(image.pixels[p], mean, {1, 1, 1});
+      for (int edgeIndex = graph.rowOffsets[p];
+           edgeIndex < graph.rowOffsets[p + 1]; ++edgeIndex) {
+        const auto &edge = graph.edges[edgeIndex];
+        if (edge.physicalDistance > 2.0f)
+          continue;
+        const float weight =
+            edge.weight * alpha[size_t(component) * n + edge.target];
+        variance +=
+            weight * distance2(image.pixels[edge.target], mean, {1, 1, 1});
+      }
+      localMean[component][p] = mean;
+      localVariance[component][p] = std::max(1.0e-6f, variance / weightSum);
+    }
+
+  std::vector<std::vector<Sample>> appearance(componentCount,
+                                              std::vector<Sample>(n));
+  double reconstructionError = 0.0, spatialVariation = 0.0;
+  for (int p = 0; p < n; ++p) {
+    Sample mixed{};
+    float correctionDenominator = 0.0f;
+    for (int component = 0; component < componentCount; ++component) {
+      const float ownership = alpha[size_t(component) * n + p];
+      mixed = add(mixed, mul(localMean[component][p], ownership));
+      correctionDenominator += ownership * localVariance[component][p];
+    }
+    const Sample residual{image.pixels[p].y - mixed.y,
+                          image.pixels[p].a - mixed.a,
+                          image.pixels[p].b - mixed.b};
+    Sample check{};
+    for (int component = 0; component < componentCount; ++component) {
+      float correction = localVariance[component][p] /
+                         std::max(kEpsilon, correctionDenominator);
+      appearance[component][p] =
+          add(localMean[component][p], mul(residual, correction));
+      const float ownership = alpha[size_t(component) * n + p];
+      check = add(check, mul(appearance[component][p], ownership));
+      spatialVariation +=
+          ownership *
+          distance2(appearance[component][p], globalMean[component], {1, 1, 1});
+    }
+    reconstructionError += distance2(check, image.pixels[p], {1, 1, 1});
+  }
+  diagnostics.appearanceUnmixingError =
+      std::sqrt(float(reconstructionError / std::max(1, n)));
+  diagnostics.appearanceSpatialVariation =
+      std::sqrt(float(spatialVariation / std::max(1, n)));
+  return appearance;
+}
 
 ComponentRecovery recoverComponents(const SpectralBasis &basis,
                                     const SparseAffinityGraph &g, int requested,
@@ -736,6 +823,13 @@ std::vector<float> groupLatents(const AnalysisImage &image,
       }
       assignment.row(c) /= std::max(1e-12, sum);
     }
+    // Preserve the canonical public identities.  The public alpha remains
+    // soft because each latent alpha is fractional; this constraint merely
+    // prevents all latent-to-plate assignments from drifting to equal rows.
+    for (int i = 0; i < plates; ++i) {
+      assignment.row(anchors[size_t(i)]).setZero();
+      assignment(anchors[size_t(i)], i) = 1.0;
+    }
     centers.setZero();
     Eigen::VectorXd centerMass = Eigen::VectorXd::Zero(plates);
     for (int c = 0; c < latent; ++c)
@@ -903,31 +997,9 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   for (int c = 0; c < params.latentCount; ++c)
     latentVariance[c] =
         std::max(1e-5f, latentVariance[c] / std::max(kEpsilon, latentMass[c]));
-  std::vector<std::vector<Sample>> appearance(params.latentCount,
-                                              std::vector<Sample>(n));
-  double unmixError = 0;
-  for (int p = 0; p < n; ++p) {
-    Sample mixed{};
-    float denom = 0;
-    for (int c = 0; c < params.latentCount; ++c) {
-      float w = alpha[size_t(c) * n + p];
-      mixed = add(mixed, mul(latentMean[c], w));
-      denom += w * latentVariance[c];
-    }
-    Sample residual{analysis.pixels[p].y - mixed.y,
-                    analysis.pixels[p].a - mixed.a,
-                    analysis.pixels[p].b - mixed.b};
-    for (int c = 0; c < params.latentCount; ++c) {
-      float factor = latentVariance[c] / std::max(kEpsilon, denom);
-      appearance[c][p] = add(latentMean[c], mul(residual, factor));
-    }
-    Sample check{};
-    for (int c = 0; c < params.latentCount; ++c)
-      check = add(check, mul(appearance[c][p], alpha[size_t(c) * n + p]));
-    unmixError += distance2(check, analysis.pixels[p], {1, 1, 1});
-  }
-  result.diagnostics.appearanceUnmixingError =
-      std::sqrt(float(unmixError / std::max(1, n)));
+  auto appearance = buildSpatialAppearances(
+      analysis, result.analysisGraph, alpha, latentMean, latentVariance,
+      params.latentCount, result.diagnostics);
   auto &assign = result.plates.latentAssignments();
   assign =
       groupLatents(analysis, alpha, latentMean, latentVariance, basis, params);
@@ -947,6 +1019,38 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       }
       plateAlpha[i][p] = pa;
       plateAppearance[i][p] = mul(value, 1 / std::max(kEpsilon, pa));
+    }
+
+  Eigen::MatrixXd publicGram =
+      Eigen::MatrixXd::Zero(params.plateCount, params.plateCount);
+  double publicError = 0.0;
+  for (int p = 0; p < n; ++p) {
+    Sample reconstruction{};
+    for (int i = 0; i < params.plateCount; ++i) {
+      reconstruction =
+          add(reconstruction, mul(plateAppearance[i][p], plateAlpha[i][p]));
+      for (int j = 0; j < params.plateCount; ++j)
+        publicGram(i, j) += plateAlpha[i][p] * plateAlpha[j][p];
+    }
+    publicError += distance2(reconstruction, analysis.pixels[p], {1, 1, 1});
+  }
+  result.diagnostics.publicReconstructionError =
+      std::sqrt(float(publicError / std::max(1, n)));
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> publicRank(publicGram);
+  double publicEigenSum = publicRank.eigenvalues().sum(), publicEntropy = 0.0;
+  for (double eigenvalue : publicRank.eigenvalues())
+    if (eigenvalue > 1.0e-15 && publicEigenSum > 0.0) {
+      const double probability = eigenvalue / publicEigenSum;
+      publicEntropy -= probability * std::log(probability);
+    }
+  result.diagnostics.publicPlateEffectiveRank = float(std::exp(publicEntropy));
+  for (int i = 0; i < params.plateCount; ++i)
+    for (int j = i + 1; j < params.plateCount; ++j) {
+      double denominator =
+          std::sqrt(std::max(1.0e-20, publicGram(i, i) * publicGram(j, j)));
+      result.diagnostics.maximumPublicPlateCorrelation =
+          std::max(result.diagnostics.maximumPublicPlateCorrelation,
+                   float(publicGram(i, j) / denominator));
     }
   std::vector<std::vector<float>> supportY(params.plateCount),
       supportAB(params.plateCount);
