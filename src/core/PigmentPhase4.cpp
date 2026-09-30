@@ -1,10 +1,14 @@
 #include "core/PigmentPhase4.h"
 
+#include "core/ChunkGradientSynthesis.h"
 #include "core/ColorSpace.h"
+#include "core/PlateSpill.h"
+#include "core/RegionHierarchy.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 
 namespace pigment {
 namespace {
@@ -20,10 +24,6 @@ YabPixel plateValue(const PublicPlateSet &p, int i, int x, int y) {
   auto a = p.appearance(i);
   return {a.y.at(x, y), a.a.at(x, y), a.b.at(x, y)};
 }
-YabPixel add(YabPixel a, YabPixel b) {
-  return {a.y + b.y, a.a + b.a, a.b + b.b};
-}
-YabPixel mul(YabPixel a, float s) { return {a.y * s, a.a * s, a.b * s}; }
 YabPixel mix(YabPixel a, YabPixel b, float t) {
   return {a.y + (b.y - a.y) * t, a.a + (b.a - a.a) * t, a.b + (b.b - a.b) * t};
 }
@@ -70,6 +70,27 @@ processPigmentPhase4(const Phase4RenderInputs &in,
   auto automatic = buildPhase4AutomaticPlates(
       static_cast<const OwnedYabPlanes &>(original).view(), p.phase4,
       in.geometry, execution);
+  auto hierarchy = buildPhase4RegionHierarchy(
+      static_cast<const OwnedYabPlanes &>(original).view(), automatic.plates,
+      p.phase4, execution);
+  auto synthesis = synthesizePhase4Chunks(
+      static_cast<const OwnedYabPlanes &>(original).view(), automatic.plates,
+      hierarchy, p.phase4, execution);
+  for(const auto &plate : synthesis.solver)
+    for(const auto &solver : plate)
+      if(!solver.converged) return {automatic.diagnostics, false};
+  auto spill = applyPhase4Spill(static_cast<const OwnedYabPlanes &>(original).view(),
+                                automatic.plates, synthesis,
+                                automatic.analysisGraph, p.phase4, execution);
+  std::optional<Phase4SpillResult> artisticPreSpill;
+  if (p.debugView == PigmentDebugView::Phase4PreSpill) {
+    auto noSpill = p.phase4;
+    noSpill.spillAmount = 0.0f;
+    artisticPreSpill.emplace(applyPhase4Spill(
+        static_cast<const OwnedYabPlanes &>(original).view(),
+        automatic.plates, synthesis, automatic.analysisGraph, noSpill,
+        execution));
+  }
   const int plateCount = automatic.plates.count(),
             latentCount = automatic.latent.count();
   execution.parallelRows(
@@ -82,27 +103,25 @@ processPigmentPhase4(const Phase4RenderInputs &in,
             YabPixel source = value(
                          static_cast<const OwnedYabPlanes &>(original).view(),
                          x, y),
-                     out{};
-            float weightSum = 0;
-            for (int i = 0; i < plateCount; ++i) {
-              const auto &control = p.phase4.plates[i];
-              if (!control.enabled)
-                continue;
-              const float w = std::max(0.0f, control.weight) *
-                              automatic.plates.alpha(i).at(x, y);
-              YabPixel q = plateValue(automatic.plates, i, x, y);
-              q.y += control.tone;
-              q.a += control.biasA;
-              q.b += control.biasB;
-              out = add(out, mul(q, w));
-              weightSum += w;
-            }
-            if (weightSum > 1e-8f)
-              out = mul(out, 1.0f / weightSum);
-            else
-              out = source;
+                     out = value(
+                         static_cast<const OwnedYabPlanes &>(spill.composite)
+                             .view(),
+                         x, y);
             bool gray = false, composite = false;
             switch (p.debugView) {
+            case PigmentDebugView::Phase4SourceBoundaryStrength:
+            case PigmentDebugView::Phase4BoundaryHierarchy: {
+              float v = hierarchy.boundaryStrength.view().at(x, y);
+              out = {v, 0, 0};
+              gray = true;
+              break;
+            }
+            case PigmentDebugView::Phase4AtomicRegions: {
+              float v = hierarchy.atomicRegionDisplay.view().at(x, y);
+              out = {v, 1.0f - v, .25f + .5f * v};
+              composite = true;
+              break;
+            }
             case PigmentDebugView::Phase4LatentComponent: {
               int i =
                   std::max(0, std::min(latentCount - 1, p.phase4.debugLatent));
@@ -201,6 +220,96 @@ processPigmentPhase4(const Phase4RenderInputs &in,
               composite = true;
               break;
             }
+            case PigmentDebugView::Phase4YRegionHierarchy:
+            case PigmentDebugView::Phase4ABRegionHierarchy:
+            case PigmentDebugView::Phase4YChunks:
+            case PigmentDebugView::Phase4ABChunks: {
+              int i =
+                  std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
+              const auto &labels =
+                  (p.debugView == PigmentDebugView::Phase4YRegionHierarchy ||
+                   p.debugView == PigmentDebugView::Phase4YChunks)
+                      ? hierarchy.plates[size_t(i)].yChunk
+                      : hierarchy.plates[size_t(i)].abChunk;
+              int local = (y - b.y1) * b.width() + x - b.x1;
+              unsigned hash = unsigned(labels[size_t(local)] + 1) * 0x9e3779b9u;
+              hash ^= hash >> 16;
+              out = {float(hash & 255u) / 255.0f,
+                     float((hash >> 8) & 255u) / 255.0f,
+                     float((hash >> 16) & 255u) / 255.0f};
+              composite = true;
+              break;
+            }
+            case PigmentDebugView::Phase4RemovedBoundaries:
+            case PigmentDebugView::Phase4RetainedBoundaries: {
+              int i =
+                  std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
+              const auto &h = hierarchy.plates[size_t(i)];
+              bool retained =
+                  p.debugView == PigmentDebugView::Phase4RetainedBoundaries;
+              float yy = (retained ? h.yRetainedBoundaries
+                                   : h.yRemovedBoundaries)
+                             .view()
+                             .at(x, y);
+              float ab = (retained ? h.abRetainedBoundaries
+                                   : h.abRemovedBoundaries)
+                             .view()
+                             .at(x, y);
+              out = {yy, ab, ab};
+              composite = true;
+              break;
+            }
+            case PigmentDebugView::Phase4SourceGradientField:
+            case PigmentDebugView::Phase4SimplifiedGradientField: {
+              int i =
+                  std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
+              float v =
+                  (p.debugView == PigmentDebugView::Phase4SourceGradientField
+                       ? synthesis.sourceGradient[size_t(i)]
+                       : synthesis.simplifiedGradient[size_t(i)])
+                      .view()
+                      .at(x, y);
+              out = {v, 0, 0};
+              gray = true;
+              break;
+            }
+            case PigmentDebugView::Phase4GradientReconstruction: {
+              int i =
+                  std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
+              out = value(
+                  static_cast<const OwnedYabPlanes &>(
+                      synthesis.plateAppearance[size_t(i)])
+                      .view(),
+                  x, y);
+              break;
+            }
+            case PigmentDebugView::Phase4PrimitiveFitError: {
+              int i =
+                  std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
+              float v = synthesis.fitError[size_t(i)].view().at(x,y);
+              out = {v, 0, 0};
+              gray = true;
+              break;
+            }
+            case PigmentDebugView::Phase4PreSpill:
+              out = value(static_cast<const OwnedYabPlanes &>(
+                              artisticPreSpill->composite)
+                              .view(),
+                          x, y);
+              break;
+            case PigmentDebugView::Phase4SpillInfluence: {
+              int i =
+                  std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
+              float v = spill.influence[size_t(i)].view().at(x, y);
+              out = {v, 0, 0};
+              gray = true;
+              break;
+            }
+            case PigmentDebugView::Phase4PostSpill:
+              out = value(
+                  static_cast<const OwnedYabPlanes &>(spill.composite).view(),
+                  x, y);
+              break;
             case PigmentDebugView::Phase4DifferenceFromSource:
               out = {.5f + .25f * (out.y - source.y), .25f * (out.a - source.a),
                      .25f * (out.b - source.b)};

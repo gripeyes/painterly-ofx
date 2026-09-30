@@ -80,6 +80,7 @@ constexpr const char* kPhase4PlateCount = "phase4PlateCount";
 constexpr const char* kPhase4LatentCount = "phase4LatentCount";
 constexpr const char* kPhase4PlateScale = "phase4PlateScale";
 constexpr const char* kPhase4PlateOverlap = "phase4PlateOverlap";
+constexpr const char* kPhase4ChromaSupportRatio = "phase4ChromaSupportRatio";
 constexpr const char* kPhase4BoundaryLock = "phase4BoundaryLock";
 constexpr const char* kPhase4Coupling = "phase4LumaChromaCoupling";
 constexpr const char* kPhase4LumaChunkScale = "phase4LumaChunkScale";
@@ -180,6 +181,7 @@ class PigmentEffect final : public OFX::ImageEffect {
     phase4DebugPlate_ = fetchIntParam(kPhase4DebugPlate);
 #define FETCH_PHASE4(member, name) member = fetchDoubleParam(name)
     FETCH_PHASE4(phase4PlateScale_, kPhase4PlateScale); FETCH_PHASE4(phase4PlateOverlap_, kPhase4PlateOverlap);
+    FETCH_PHASE4(phase4ChromaSupportRatio_, kPhase4ChromaSupportRatio);
     FETCH_PHASE4(phase4BoundaryLock_, kPhase4BoundaryLock); FETCH_PHASE4(phase4Coupling_, kPhase4Coupling);
     FETCH_PHASE4(phase4LumaChunkScale_, kPhase4LumaChunkScale); FETCH_PHASE4(phase4ChromaChunkScale_, kPhase4ChromaChunkScale);
     FETCH_PHASE4(phase4MergeSelectivity_, kPhase4MergeSelectivity); FETCH_PHASE4(phase4InternalVariation_, kPhase4InternalVariation);
@@ -247,6 +249,7 @@ class PigmentEffect final : public OFX::ImageEffect {
       *debugPlane_ = nullptr, *planeSource_ = nullptr, *shadingModel_ = nullptr,
       *transitionSolver_ = nullptr, *computeBackend_ = nullptr;
   OFX::DoubleParam *phase4PlateScale_ = nullptr, *phase4PlateOverlap_ = nullptr,
+      *phase4ChromaSupportRatio_ = nullptr,
       *phase4BoundaryLock_ = nullptr, *phase4Coupling_ = nullptr,
       *phase4LumaChunkScale_ = nullptr, *phase4ChromaChunkScale_ = nullptr,
       *phase4MergeSelectivity_ = nullptr, *phase4InternalVariation_ = nullptr,
@@ -326,6 +329,7 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   p.phase4.debugPlate = std::max(0, std::min(7, phase4DebugPlate_->getValueAtTime(time)));
 #define VALUE_PHASE4(member, field) p.phase4.field = static_cast<float>(member->getValueAtTime(time))
   VALUE_PHASE4(phase4PlateScale_, plateScale); VALUE_PHASE4(phase4PlateOverlap_, plateOverlap);
+  VALUE_PHASE4(phase4ChromaSupportRatio_, chromaSupportRatio);
   VALUE_PHASE4(phase4BoundaryLock_, boundaryLock); VALUE_PHASE4(phase4Coupling_, lumaChromaCoupling);
   VALUE_PHASE4(phase4LumaChunkScale_, lumaChunkScale); VALUE_PHASE4(phase4ChromaChunkScale_, chromaChunkScale);
   VALUE_PHASE4(phase4MergeSelectivity_, mergeSelectivity); VALUE_PHASE4(phase4InternalVariation_, internalVariation);
@@ -437,6 +441,11 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
         maskImage ? &maskView : nullptr};
     const auto diagnostics = processPigmentPhase4(
         cpu, {[this] { return abort(); }, serialRows, nullptr});
+    if(!diagnostics.reconstructionConverged) {
+      setPersistentMessage(OFX::Message::eMessageError,"PigmentPhase4Poisson",
+                           "Phase 4 bounded reconstruction did not converge to the required tolerance.");
+      OFX::throwSuiteStatusException(kOfxStatFailed);
+    }
     if (!diagnostics.gate.eigenspaceFinite || !diagnostics.gate.componentsFinite ||
         !diagnostics.gate.appearanceFinite) {
       setPersistentMessage(OFX::Message::eMessageError, "PigmentPhase4GateA",
@@ -715,6 +724,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   auto* plateCount = d.defineIntParam(kPhase4PlateCount); plateCount->setLabels("Plate Count","Plate Count","Plate Count"); plateCount->setDefault(6); plateCount->setRange(4,8); plateCount->setDisplayRange(4,8); plateCount->setParent(*phase4Auto);
   number(d,*phase4Auto,kPhase4PlateScale,"Plate Scale",48,4,256,128,"Graph-geodesic component adjacency scale; never a blur radius");
   number(d,*phase4Auto,kPhase4PlateOverlap,"Plate Overlap",.55,0,1,1,"Latent grouping entropy and graph-support budget",OFX::eDoubleTypeScale);
+  number(d,*phase4Auto,kPhase4ChromaSupportRatio,"Chroma Support Ratio",2,.25,4,3,"AB graph-support reach relative to Y; independent of Chunk Scale",OFX::eDoubleTypeScale);
   number(d,*phase4Auto,kPhase4BoundaryLock,"Boundary Lock",.75,0,1,1,"Raises persistent-boundary disappearance levels",OFX::eDoubleTypeScale);
   number(d,*phase4Auto,kPhase4Coupling,"Luma/Chroma Coupling",.35,0,1,1,"Equalizes AB organization toward Y",OFX::eDoubleTypeScale);
   auto* phase4Chunk=group(d,"phase4ChunkGroup","Chunk Formation",false);phase4Chunk->setParent(*phase4);

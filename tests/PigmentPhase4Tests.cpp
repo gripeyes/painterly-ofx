@@ -1,5 +1,8 @@
+#include "core/ChunkGradientSynthesis.h"
 #include "core/LatentPlateGraph.h"
 #include "core/PigmentPhase4.h"
+#include "core/PlateSpill.h"
+#include "core/RegionHierarchy.h"
 
 #include <cmath>
 #include <iostream>
@@ -91,6 +94,19 @@ void automaticPlates() {
   check(result.diagnostics.appearanceUnmixingError < 1e-4f &&
             result.diagnostics.appearanceSpatialVariation > 1e-4f,
         "A3 appearance is spatially varying and reconstructive");
+  check(result.diagnostics.fullResolutionReconstructionError < 1e-5f,
+        "full-resolution conditional color refinement preserves source reconstruction");
+  const auto &distributions = result.latent.distributions();
+  check(distributions.components.size() == size_t(result.latent.count()) &&
+        distributions.width > 1 && distributions.height > 1,
+        "latent local Gaussian distributions remain stored after unmixing");
+  for(const auto &component : distributions.components) for(const auto &d : component) {
+    check(d.covariance[0]>0 && d.covariance[4]>0 && d.covariance[8]>0,
+          "conditional color covariance has positive conditioning");
+    check(std::abs(d.covariance[1]-d.covariance[3])<1e-12 &&
+          std::abs(d.covariance[2]-d.covariance[6])<1e-12,
+          "retained local covariance is symmetric");
+  }
   check(result.diagnostics.publicReconstructionError < 1e-4f &&
             result.diagnostics.publicPlateEffectiveRank > 1.1f &&
             result.diagnostics.maximumPublicPlateCorrelation < 0.999f,
@@ -123,6 +139,213 @@ void automaticPlates() {
             result.diagnostics.componentsFinite &&
             result.diagnostics.appearanceFinite,
         "Gate A diagnostics are finite");
+}
+
+void regionHierarchy() {
+  pigment::RectI bounds{0, 0, 64, 40};
+  auto image = fixture(bounds);
+  auto source = static_cast<const pigment::OwnedYabPlanes &>(image).view();
+  pigment::Phase4Params parameters;
+  parameters.latentCount = 12;
+  parameters.plateCount = 4;
+  parameters.lumaChunkScale = 0;
+  parameters.chromaChunkScale = 0;
+  auto automatic = pigment::buildPhase4AutomaticPlates(source, parameters, {});
+  auto zero =
+      pigment::buildPhase4RegionHierarchy(source, automatic.plates, parameters);
+  check(zero.atomicRegionCount > 1, "shared atomic source RAG has regions");
+  for (const auto &plate : zero.plates) {
+    check(plate.yChunkCount == zero.atomicRegionCount &&
+              plate.abChunkCount == zero.atomicRegionCount,
+          "Chunk Scale zero is an exact atomic-hierarchy cut");
+  }
+  parameters.lumaChunkScale = 48;
+  parameters.chromaChunkScale = 96;
+  auto merged =
+      pigment::buildPhase4RegionHierarchy(source, automatic.plates, parameters);
+  for (size_t plate = 0; plate < merged.plates.size(); ++plate) {
+    check(merged.plates[plate].yChunkCount <= zero.plates[plate].yChunkCount &&
+              merged.plates[plate].abChunkCount <=
+                  zero.plates[plate].abChunkCount,
+          "higher chunk cuts merge regions monotonically");
+    const auto &h=merged.plates[plate];
+    check(h.yTree.size()==zero.plates[plate].yTree.size(),
+          "Chunk Scale only cuts the existing tree");
+    for(size_t node=0;node<h.yTree.size();++node) {
+      const auto &n=h.yTree[node];
+      check(n.left==zero.plates[plate].yTree[node].left &&
+            n.right==zero.plates[plate].yTree[node].right &&
+            n.level==zero.plates[plate].yTree[node].level,
+            "scale changes preserve merge topology and disappearance levels");
+      if(n.left>=0) check(n.level>=h.yTree[size_t(n.left)].level &&
+                         n.level>=h.yTree[size_t(n.right)].level,
+                         "merge levels are nested and monotonic");
+    }
+    for(int y=0;y<bounds.height();++y) for(int x=0;x<bounds.width();++x) {
+      size_t p=size_t(y)*bounds.width()+x;
+      if(x+1==bounds.width()) check(std::isinf(h.yEdgeX[p]),"RoD grid edge has infinite level");
+      else if(merged.atomicRegion[p]==merged.atomicRegion[p+1])
+        check(h.yEdgeX[p]==0,"same-atomic-region edge has zero level");
+      else check((h.yEdgeX[p]<=parameters.lumaChunkScale)==(h.yChunk[p]==h.yChunk[p+1]),
+                 "LCA edge level agrees with the hierarchy cut");
+    }
+  }
+  bool conditioned = false;
+  for (size_t plate = 1; plate < merged.plates.size(); ++plate)
+    conditioned |= merged.plates[plate].yChunk != merged.plates[0].yChunk ||
+                   merged.plates[plate].abChunk != merged.plates[0].abChunk;
+  check(conditioned, "chunk hierarchies are conditioned per public plate");
+
+  auto synthesis = pigment::synthesizePhase4Chunks(source, automatic.plates,
+                                                   merged, parameters);
+  bool changed = false;
+  for (int plate = 0; plate < automatic.plates.count(); ++plate) {
+    auto before = automatic.plates.appearance(plate);
+    auto after = static_cast<const pigment::OwnedYabPlanes &>(
+                     synthesis.plateAppearance[size_t(plate)])
+                     .view();
+    for (int y = bounds.y1; y < bounds.y2; ++y)
+      for (int x = bounds.x1; x < bounds.x2; ++x) {
+        check(std::isfinite(after.y.at(x, y)) &&
+                  std::isfinite(after.a.at(x, y)) &&
+                  std::isfinite(after.b.at(x, y)),
+              "chunk synthesis remains finite");
+        changed |= std::abs(after.y.at(x, y) - before.y.at(x, y)) > 1e-5f;
+      }
+  }
+  check(changed, "nonzero Chunk Scale synthesizes plate appearance");
+  for(const auto &plate:synthesis.solver) for(const auto &solver:plate)
+    check(solver.converged && solver.relativeResidual<=1e-5,
+          "true bounded Poisson residual satisfies the specified tolerance");
+  for(int plate=0;plate<automatic.plates.count();++plate) {
+    auto before=automatic.plates.appearance(plate);
+    auto after=static_cast<const pigment::OwnedYabPlanes &>(synthesis.plateAppearance[size_t(plate)]).view();
+    const auto &h=merged.plates[size_t(plate)];
+    for(int y=bounds.y1;y<bounds.y2;++y) for(int x=bounds.x1;x<bounds.x2;++x) {
+      bool boundary=h.yRetainedBoundaries.view().at(x,y)>0 ||
+                    x==bounds.x1 || x+1==bounds.x2 || y==bounds.y1 || y+1==bounds.y2;
+      if(boundary || automatic.plates.supportY(plate).at(x,y)<.02f)
+        check(after.y.at(x,y)==before.y.at(x,y),"retained and unsupported values are bit-exact constraints");
+    }
+  }
+
+  parameters.spillAmount = 0;
+  auto completeParams = parameters;
+  completeParams.gradientComplexity = 1;
+  auto complete = pigment::synthesizePhase4Chunks(source, automatic.plates,
+                                                  merged, completeParams);
+  for(int plate=0;plate<automatic.plates.count();++plate) {
+    auto before=automatic.plates.appearance(plate);
+    auto after=static_cast<const pigment::OwnedYabPlanes &>(complete.plateAppearance[size_t(plate)]).view();
+    for(int y=bounds.y1;y<bounds.y2;++y) for(int x=bounds.x1;x<bounds.x2;++x)
+      check(before.y.at(x,y)==after.y.at(x,y) && before.a.at(x,y)==after.a.at(x,y) &&
+            before.b.at(x,y)==after.b.at(x,y),
+            "full Gradient Complexity preserves automatic appearance bit-exactly");
+  }
+  auto noSpill = pigment::applyPhase4Spill(source, automatic.plates, synthesis,
+                                           automatic.analysisGraph, parameters);
+  parameters.spillAmount = .8f;
+  parameters.lumaSpill = .05f;
+  parameters.chromaSpill = 1.0f;
+  auto spill = pigment::applyPhase4Spill(source, automatic.plates, synthesis,
+                                         automatic.analysisGraph, parameters);
+  double yChange = 0, abChange = 0;
+  auto noSpillView =
+      static_cast<const pigment::OwnedYabPlanes &>(noSpill.composite).view();
+  auto spillView =
+      static_cast<const pigment::OwnedYabPlanes &>(spill.composite).view();
+  for (int y = bounds.y1; y < bounds.y2; ++y)
+    for (int x = bounds.x1; x < bounds.x2; ++x) {
+      yChange += std::abs(spillView.y.at(x, y) - noSpillView.y.at(x, y));
+      abChange += std::hypot(spillView.a.at(x, y) - noSpillView.a.at(x, y),
+                             spillView.b.at(x, y) - noSpillView.b.at(x, y));
+    }
+  check(abChange > yChange,
+        "directed Spill can reorganize AB more strongly than Y");
+  auto disabled=parameters;
+  for(auto &control:disabled.plates) control.weight=0;
+  auto noOwnership=pigment::applyPhase4Spill(source,automatic.plates,synthesis,
+                                             automatic.analysisGraph,disabled);
+  auto returned=static_cast<const pigment::OwnedYabPlanes &>(noOwnership.composite).view();
+  for(int y=bounds.y1;y<bounds.y2;++y) for(int x=bounds.x1;x<bounds.x2;++x)
+    check(returned.y.at(x,y)==source.y.at(x,y) && returned.a.at(x,y)==source.a.at(x,y) &&
+          returned.b.at(x,y)==source.b.at(x,y),"zero artist ownership returns original source exactly");
+
+  parameters.lumaChunkScale = 0;
+  parameters.chromaChunkScale = 0;
+  auto bypassHierarchy =
+      pigment::buildPhase4RegionHierarchy(source, automatic.plates, parameters);
+  auto bypass = pigment::synthesizePhase4Chunks(source, automatic.plates,
+                                                bypassHierarchy, parameters);
+  for (int plate = 0; plate < automatic.plates.count(); ++plate) {
+    auto before = automatic.plates.appearance(plate);
+    auto after = static_cast<const pigment::OwnedYabPlanes &>(
+                     bypass.plateAppearance[size_t(plate)])
+                     .view();
+    for (int y = bounds.y1; y < bounds.y2; ++y)
+      for (int x = bounds.x1; x < bounds.x2; ++x)
+        check(after.y.at(x, y) == before.y.at(x, y) &&
+                  after.a.at(x, y) == before.a.at(x, y) &&
+                  after.b.at(x, y) == before.b.at(x, y),
+              "Chunk Scale zero is a bit-exact synthesis bypass");
+  }
+}
+
+void primitiveGradientSurvival() {
+  // An accepted affine hypothesis must not erase the source residual.  All
+  // interior edges here have ell=0, so the approved survival gain is exactly C.
+  pigment::RectI bounds{0,0,32,32};
+  pigment::OwnedYabPlanes image(bounds);
+  pigment::PublicPlateSet plates(bounds,4);
+  pigment::Phase4RegionHierarchy hierarchy;
+  hierarchy.bounds=bounds;
+  hierarchy.atomicRegion.assign(32*32,0);
+  hierarchy.atomicRegionCount=1;
+  for(int i=0;i<4;++i) {
+    hierarchy.plates.emplace_back(bounds);
+    auto &h=hierarchy.plates.back();
+    h.yChunk.assign(32*32,0);h.abChunk=h.yChunk;
+    h.yChunkCount=h.abChunkCount=1;
+    h.yEdgeX.assign(32*32,0);h.yEdgeY=h.yEdgeX;
+    h.abEdgeX=h.yEdgeX;h.abEdgeY=h.yEdgeX;
+    auto value=plates.appearance(i);
+    for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
+      float v=.5f+.01f*x+(((x+y)&1)?-.0002f:.0002f);
+      image.view().y.at(x,y)=value.y.at(x,y)=v;
+      value.a.at(x,y)=value.b.at(x,y)=0;
+      plates.alpha(i).at(x,y)=.25f;
+      plates.supportY(i).at(x,y)=plates.supportAB(i).at(x,y)=1;
+    }
+  }
+  pigment::Phase4Params params;
+  params.gradientComplexity=.35f;
+  auto source=static_cast<const pigment::OwnedYabPlanes &>(image).view();
+  auto result=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  auto reconstructed=static_cast<const pigment::OwnedYabPlanes &>(result.plateAppearance[0]).view();
+  double originalResidual=0,retainedResidual=0;
+  for(int y=8;y<24;++y) for(int x=8;x<24;++x) {
+    double sign=((x+y)&1)?-1:1;
+    originalResidual+=sign*(source.y.at(x,y)-(.5+.01*x));
+    retainedResidual+=sign*(reconstructed.y.at(x,y)-(.5+.01*x));
+  }
+  check(std::abs(retainedResidual/originalResidual-.35)<.02,
+        "accepted affine candidate retains Complexity fraction of fine gradients");
+  check(result.primitiveSelection[0].view().at(16,16)>0 &&
+        result.primitiveSelection[0].view().at(16,16)<.5f,
+        "gradient-survival fixture actually selects an affine candidate");
+  for(int i=0;i<4;++i) for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
+    float v=.5f+(((x+y)&1)?-.0002f:.0002f);
+    image.view().y.at(x,y)=plates.appearance(i).y.at(x,y)=v;
+  }
+  auto flat=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  check(flat.primitiveSelection[0].view().at(16,16)==0,
+        "a flat broad field can qualify as solid despite fine oscillation");
+  auto flatResult=static_cast<const pigment::OwnedYabPlanes &>(flat.plateAppearance[0]).view();
+  double flatResidual=0;
+  for(int y=8;y<24;++y) for(int x=8;x<24;++x)
+    flatResidual+=(((x+y)&1)?-1:1)*(flatResult.y.at(x,y)-.5f);
+  check(std::abs(flatResidual/originalResidual-.35)<.02,
+        "solid qualification changes analysis only, not approved gradient survival");
 }
 
 void renderIdentityAndAlpha() {
@@ -160,8 +383,10 @@ void renderIdentityAndAlpha() {
 int main() {
   parameterSemantics();
   automaticPlates();
+  regionHierarchy();
+  primitiveGradientSurvival();
   renderIdentityAndAlpha();
   if (failures)
     return 1;
-  std::cout << "All Phase 4 Gate-A tests passed\n";
+  std::cout << "All Phase 4 CPU tests passed (photographic gates are evaluated separately)\n";
 }

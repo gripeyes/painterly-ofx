@@ -14,7 +14,10 @@ struct Phase4RenderInputs {
   const ConstImageView* mask = nullptr;
 };
 
-struct Phase4RenderDiagnostics { Phase4GateDiagnostics gate{}; };
+struct Phase4RenderDiagnostics {
+  Phase4GateDiagnostics gate{};
+  bool reconstructionConverged = true;
+};
 
 Phase4RenderDiagnostics processPigmentPhase4(
     const Phase4RenderInputs& inputs, const ExecutionContext& execution = {});

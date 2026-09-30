@@ -1,0 +1,302 @@
+#include "core/ChunkGradientSynthesis.h"
+#include <Eigen/Dense>
+#include <Eigen/IterativeLinearSolvers>
+#include <Eigen/SparseCholesky>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <vector>
+
+namespace pigment {
+namespace {
+constexpr double kSupport = .02;
+struct Model {
+  int kind = 0;
+  Eigen::Vector3d c = Eigen::Vector3d::Zero();
+  double rx = 0, ry = 0;
+  double evaluate(double x, double y) const {
+    if (kind == 0) return c[0];
+    if (kind == 1) return c[0] + c[1]*x + c[2]*y;
+    return c[0] + c[1]*std::hypot(x-rx,y-ry);
+  }
+};
+struct ChannelResult {
+  std::vector<float> values, gradient, model, error;
+  Phase4PoissonDiagnostics solver;
+};
+
+ChannelResult synthesizeChannel(ConstFloatPlaneView automatic,
+    ConstFloatPlaneView support, const std::vector<int>&chunks, int chunkCount,
+    const std::vector<float>&edgeX, const std::vector<float>&edgeY,
+    float chunkScale, float complexity, const ExecutionContext&execution) {
+  RectI b=automatic.bounds;
+  int width=b.width(),height=b.height(),count=width*height;
+  ChannelResult out;
+  out.values.resize(size_t(count));out.gradient.assign(size_t(count),0);
+  out.model.assign(size_t(count),0);out.error.assign(size_t(count),0);
+  std::vector<double> input(size_t(count),0),coverage(size_t(count),0);
+  for(int y=0;y<height;++y) for(int x=0;x<width;++x) {
+    int p=y*width+x;
+    input[size_t(p)]=automatic.at(x+b.x1,y+b.y1);
+    coverage[size_t(p)]=support.at(x+b.x1,y+b.y1);
+    out.values[size_t(p)]=float(input[size_t(p)]);
+  }
+  if(chunkScale<=0 || complexity>=1) return out;
+  complexity=std::clamp(complexity,0.0f,1.0f);
+  std::vector<std::vector<int>> pixels{size_t(chunkCount)};
+  double sum=0,sum2=0,mass=0;
+  for(int p=0;p<count;++p) if(coverage[size_t(p)]>=kSupport) {
+    pixels[size_t(chunks[size_t(p)])].push_back(p);
+    double w=coverage[size_t(p)],v=input[size_t(p)];
+    sum+=w*v;sum2+=w*v*v;mass+=w;
+  }
+  double sceneScale=std::max(1e-5,std::sqrt(std::max(0.0,
+      sum2/std::max(1e-12,mass)-std::pow(sum/std::max(1e-12,mass),2))));
+  std::vector<Model> models{size_t(chunkCount)};
+  std::vector<int> selected(size_t(chunkCount),3);
+  std::vector<float> errors(size_t(chunkCount),0);
+  auto xy=[&](int p) {return Eigen::Vector2d(double(p%width)/std::max(1,width-1),
+                                           double(p/width)/std::max(1,height-1));};
+  for(int chunk=0;chunk<chunkCount;++chunk) {
+    if((chunk&127)==0 && execution.cancelled()) throw std::runtime_error("Phase 4 synthesis cancelled");
+    const auto &domain=pixels[size_t(chunk)];
+    if(domain.empty()) continue;
+    double m=0;Eigen::Vector2d center=Eigen::Vector2d::Zero();
+    Eigen::Vector2d lo(1,1),hi(0,0);
+    for(int p:domain) {auto pos=xy(p);double w=coverage[size_t(p)];
+      m+=w;center+=w*pos;lo=lo.cwiseMin(pos);hi=hi.cwiseMax(pos);}
+    center/=m;
+    std::vector<Model> candidates(11);
+    candidates[0].kind=0;candidates[1].kind=1;
+    for(int k=0;k<9;++k) {
+      auto &model=candidates[size_t(k+2)];model.kind=2;
+      double angle=2*3.141592653589793*(k-1)/8;
+      model.rx=center.x()+(k==0?0:.35*(hi.x()-lo.x())*std::cos(angle));
+      model.ry=center.y()+(k==0?0:.35*(hi.y()-lo.y())*std::sin(angle));
+    }
+    for(auto &model:candidates) {
+      Eigen::Matrix3d normal=Eigen::Matrix3d::Zero();
+      Eigen::Vector3d rhs=Eigen::Vector3d::Zero();
+      for(int p:domain) {
+        auto pos=xy(p);Eigen::Vector3d phi(1,0,0);
+        if(model.kind==1) {phi[1]=pos.x();phi[2]=pos.y();}
+        if(model.kind==2) phi[1]=std::hypot(pos.x()-model.rx,pos.y()-model.ry);
+        double w=coverage[size_t(p)];normal+=w*phi*phi.transpose();rhs+=w*phi*input[size_t(p)];
+      }
+      normal.diagonal().array()+=1e-10*std::max(1.0,m);
+      model.c=normal.ldlt().solve(rhs);
+    }
+    // Qualify broad gradient hypotheses against source chords, not every
+    // fine oscillation the model is intentionally meant to extinguish.
+    // Chords stay wholly inside this supported solve domain; they neither
+    // average source pixels nor cross retained contours. A local second-
+    // difference estimate removes oscillatory variance from this ANALYSIS
+    // score only. The original gradients still enter reconstruction below.
+    struct Chord {int first,second,length;double weight;};
+    std::vector<Chord> chords;
+    double noise=0,noiseMass=0;
+    for(int p:domain) {
+      int x=p%width,y=p/width;
+      for(int axis=0;axis<2;++axis) {
+        int step=axis==0?1:width;
+        int coordinate=axis==0?x:y,extent=axis==0?width:height;
+        if(coordinate>0 && coordinate+1<extent &&
+           chunks[size_t(p-step)]==chunk && chunks[size_t(p+step)]==chunk &&
+           coverage[size_t(p-step)]>=kSupport && coverage[size_t(p+step)]>=kSupport) {
+          double second=input[size_t(p-step)]-2*input[size_t(p)]+input[size_t(p+step)];
+          noise+=coverage[size_t(p)]*second*second/6;
+          noiseMass+=coverage[size_t(p)];
+        }
+        for(int length:{8,16}) {
+          if(coordinate+length>=extent) continue;
+          bool valid=true;
+          for(int offset=1;offset<=length;++offset)
+            if(chunks[size_t(p+offset*step)]!=chunk ||
+               coverage[size_t(p+offset*step)]<kSupport) {valid=false;break;}
+          if(valid) chords.push_back({p,p+length*step,length,
+              std::sqrt(coverage[size_t(p)]*coverage[size_t(p+length*step)])});
+        }
+      }
+    }
+    noise/=std::max(1e-20,noiseMass);
+    double best=std::numeric_limits<double>::infinity();
+    bool accepted=false;
+    for(int k=0;k<int(candidates.size());++k) {
+      const auto &model=candidates[size_t(k)];double err=0,ge=0,gs=0,noiseEnergy=0;
+      for(int p:domain) {
+        auto pos=xy(p);double estimate=model.evaluate(pos.x(),pos.y());
+        err+=coverage[size_t(p)]*std::pow(estimate-input[size_t(p)],2);
+      }
+      for(const auto &chord:chords) {
+        auto pp=xy(chord.first),qq=xy(chord.second);
+        double g=(input[size_t(chord.second)]-input[size_t(chord.first)])/chord.length;
+        double bg=(model.evaluate(qq.x(),qq.y())-model.evaluate(pp.x(),pp.y()))/chord.length;
+        ge+=chord.weight*(g-bg)*(g-bg);gs+=chord.weight*g*g;
+        noiseEnergy+=chord.weight*2*noise/(chord.length*chord.length);
+      }
+      double ve=std::sqrt(std::max(0.0,err/m-noise))/sceneScale;
+      double gradientError=std::sqrt(std::max(0.0,ge-noiseEnergy)/
+                                    std::max(1e-20,gs-noiseEnergy));
+      double combined=ve+.25*gradientError;
+      if(combined<best) best=combined;
+      if(!accepted && ve<=.04+.20*(1-complexity) && gradientError<=.10+.70*(1-complexity)) {
+        models[size_t(chunk)]=model;selected[size_t(chunk)]=model.kind;
+        errors[size_t(chunk)]=float(ve);accepted=true;
+      }
+    }
+    if(!accepted) {
+      // A rejected primitive must not secretly generate the final shading.
+      // In the source-gradient fallback the retained contour constraints
+      // provide the broad harmonic field, with hierarchy-weighted original
+      // gradients supplying interior variation. No failed ramp is imposed.
+      models[size_t(chunk)]=Model{};
+      errors[size_t(chunk)]=float(best);
+    }
+  }
+  std::vector<double> wx(size_t(count),0),wy(size_t(count),0),rhs(size_t(count),0),diag(size_t(count),0);
+  std::vector<bool> fixed(size_t(count),false);
+  for(int p=0;p<count;++p) {
+    int x=p%width,y=p/width,c=chunks[size_t(p)];
+    fixed[size_t(p)]=coverage[size_t(p)]<kSupport || x==0 || y==0 || x+1==width || y+1==height;
+    for(int q:{x>0?p-1:-1,x+1<width?p+1:-1,y>0?p-width:-1,y+1<height?p+width:-1})
+      if(q>=0 && (chunks[size_t(q)]!=c || coverage[size_t(q)]<kSupport)) fixed[size_t(p)]=true;
+    out.model[size_t(p)]=float(selected[size_t(c)])/3;
+    out.error[size_t(p)]=errors[size_t(c)];
+  }
+  auto appendEdge=[&](int p,int q,float level,double &weight) {
+    if(chunks[size_t(p)]!=chunks[size_t(q)] || coverage[size_t(p)]<kSupport || coverage[size_t(q)]<kSupport) return;
+    weight=std::sqrt(coverage[size_t(p)]*coverage[size_t(q)]);
+    int c=chunks[size_t(p)];auto pp=xy(p),qq=xy(q);const auto &model=models[size_t(c)];
+    double gb=model.evaluate(qq.x(),qq.y())-model.evaluate(pp.x(),pp.y());
+    double t=std::clamp((double(level)/chunkScale-.35)/(.95-.35),0.0,1.0);
+    // The approved survival equation applies to all candidates. A qualifying
+    // primitive is a broad gradient hypothesis, not permission to erase every
+    // source gradient regardless of the artist's Complexity control.
+    double r=complexity+(1-complexity)*t*t*(3-2*t);
+    double g=gb+r*(input[size_t(q)]-input[size_t(p)]-gb);
+    rhs[size_t(p)]-=weight*g;rhs[size_t(q)]+=weight*g;
+    diag[size_t(p)]+=weight;diag[size_t(q)]+=weight;
+    out.gradient[size_t(p)]+=float(g*g);out.gradient[size_t(q)]+=float(g*g);
+  };
+  for(int p=0;p<count;++p) {
+    if(p%width+1<width) appendEdge(p,p+1,edgeX[size_t(p)],wx[size_t(p)]);
+    if(p/width+1<height) appendEdge(p,p+width,edgeY[size_t(p)],wy[size_t(p)]);
+  }
+  // Eliminate fixed contour values from the unknown system. No source data
+  // screen is added to the chunk-interior Poisson equation.
+  auto edges=[&](auto fn) {for(int p=0;p<count;++p) {
+    if(wx[size_t(p)]>0) fn(p,p+1,wx[size_t(p)]);
+    if(wy[size_t(p)]>0) fn(p,p+width,wy[size_t(p)]);
+  }};
+  edges([&](int p,int q,double w) {
+    if(!fixed[size_t(p)] && fixed[size_t(q)]) rhs[size_t(p)]+=w*input[size_t(q)];
+    if(!fixed[size_t(q)] && fixed[size_t(p)]) rhs[size_t(q)]+=w*input[size_t(p)];
+  });
+  auto apply=[&](const std::vector<double>&v,std::vector<double>&a) {
+    for(int p=0;p<count;++p) a[size_t(p)]=fixed[size_t(p)]?0:diag[size_t(p)]*v[size_t(p)];
+    edges([&](int p,int q,double w) {if(!fixed[size_t(p)]&&!fixed[size_t(q)]) {
+      a[size_t(p)]-=w*v[size_t(q)];a[size_t(q)]-=w*v[size_t(p)];
+    }});
+  };
+  auto dot=[&](const std::vector<double>&a,const std::vector<double>&v) {
+    double s=0;for(int p=0;p<count;++p) if(!fixed[size_t(p)]) s+=a[size_t(p)]*v[size_t(p)];return s;
+  };
+  std::vector<Eigen::Triplet<double>> triplets;
+  triplets.reserve(size_t(count)*5);
+  for(int p=0;p<count;++p)
+    triplets.emplace_back(p,p,fixed[size_t(p)]?1.0:diag[size_t(p)]);
+  edges([&](int p,int q,double w) {if(!fixed[size_t(p)]&&!fixed[size_t(q)]) {
+    triplets.emplace_back(p,q,-w);triplets.emplace_back(q,p,-w);
+  }});
+  Eigen::SparseMatrix<double> matrix(count,count);
+  matrix.setFromTriplets(triplets.begin(),triplets.end());
+  // The CPU gate uses a complete sparse factor as the PCG preconditioner.
+  // This preserves the exact bounded operator while making solver error
+  // negligible before judging the photographic formulation.  A faster
+  // preconditioner is a later implementation optimization, not a new look.
+  Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> preconditioner;
+  preconditioner.compute(matrix);
+  if(preconditioner.info()!=Eigen::Success)
+    throw std::runtime_error("Phase 4 Poisson preconditioner failed");
+  auto precondition=[&](const std::vector<double>&residual,std::vector<double>&output) {
+    Eigen::Map<const Eigen::VectorXd> inputVector(residual.data(),count);
+    Eigen::Map<Eigen::VectorXd> outputVector(output.data(),count);
+    outputVector=preconditioner.solve(inputVector);
+  };
+  std::vector<double> u=input,r(size_t(count),0),z(size_t(count),0),direction(size_t(count),0),ad(size_t(count),0);
+  apply(u,ad);
+  for(int p=0;p<count;++p) if(!fixed[size_t(p)] && diag[size_t(p)]>0) {
+    r[size_t(p)]=rhs[size_t(p)]-ad[size_t(p)];
+  }
+  precondition(r,z);direction=z;
+  double initial=std::sqrt(dot(r,r)),rz=dot(r,z);
+  out.solver.converged=initial<1e-14;
+  for(int it=0;it<400 && !out.solver.converged;++it) {
+    if(execution.cancelled()) throw std::runtime_error("Phase 4 Poisson cancelled");
+    apply(direction,ad);double denominator=dot(direction,ad);
+    if(denominator<=1e-30) break;
+    double step=rz/denominator;
+    for(int p=0;p<count;++p) if(!fixed[size_t(p)]) {
+      u[size_t(p)]+=step*direction[size_t(p)];r[size_t(p)]-=step*ad[size_t(p)];
+    }
+    out.solver.iterations=it+1;
+    out.solver.relativeResidual=std::sqrt(dot(r,r))/std::max(1e-14,initial);
+    out.solver.converged=out.solver.relativeResidual<=1e-5;
+    if(out.solver.converged) break;
+    precondition(r,z);
+    double next=dot(r,z),beta=next/std::max(1e-30,rz);rz=next;
+    for(int p=0;p<count;++p) direction[size_t(p)]=z[size_t(p)]+beta*direction[size_t(p)];
+  }
+  apply(u,ad);for(int p=0;p<count;++p) r[size_t(p)]=fixed[size_t(p)]?0:rhs[size_t(p)]-ad[size_t(p)];
+  out.solver.relativeResidual=std::sqrt(dot(r,r))/std::max(1e-14,initial);
+  out.solver.converged=initial<1e-14 || out.solver.relativeResidual<=1e-5;
+  for(int p=0;p<count;++p) {out.values[size_t(p)]=float(u[size_t(p)]);
+                           out.gradient[size_t(p)]=std::sqrt(out.gradient[size_t(p)]);}
+  return out;
+}
+
+void copyChannel(const std::vector<float>&v,FloatPlaneView out) {
+  for(int y=out.bounds.y1;y<out.bounds.y2;++y) for(int x=out.bounds.x1;x<out.bounds.x2;++x)
+    out.at(x,y)=v[size_t(y-out.bounds.y1)*out.bounds.width()+x-out.bounds.x1];
+}
+} // namespace
+
+Phase4ChunkSynthesis synthesizePhase4Chunks(ConstYabPlanes source,
+    const PublicPlateSet &plates,const Phase4RegionHierarchy &hierarchy,
+    const Phase4Params &params,const ExecutionContext &execution) {
+  (void)source;
+  Phase4ChunkSynthesis result(hierarchy.bounds);
+  for(int plate=0;plate<plates.count();++plate) {
+    result.plateAppearance.emplace_back(hierarchy.bounds);
+    result.sourceGradient.emplace_back(hierarchy.bounds);
+    result.simplifiedGradient.emplace_back(hierarchy.bounds);
+    result.primitiveSelection.emplace_back(hierarchy.bounds);
+    result.fitError.emplace_back(hierarchy.bounds);
+    auto automatic=plates.appearance(plate);const auto &h=hierarchy.plates[size_t(plate)];
+    auto y=synthesizeChannel(automatic.y,plates.supportY(plate),h.yChunk,h.yChunkCount,h.yEdgeX,h.yEdgeY,
+                             params.lumaChunkScale,params.gradientComplexity,execution);
+    auto a=synthesizeChannel(automatic.a,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
+                             params.chromaChunkScale,params.gradientComplexity,execution);
+    auto b=synthesizeChannel(automatic.b,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
+                             params.chromaChunkScale,params.gradientComplexity,execution);
+    result.solver.push_back({y.solver,a.solver,b.solver});
+    auto out=result.plateAppearance.back().view();copyChannel(y.values,out.y);copyChannel(a.values,out.a);copyChannel(b.values,out.b);
+    copyChannel(y.gradient,result.simplifiedGradient.back().view());
+    copyChannel(y.model,result.primitiveSelection.back().view());copyChannel(y.error,result.fitError.back().view());
+    auto sg=result.sourceGradient.back().view();
+    for(int yy=hierarchy.bounds.y1;yy<hierarchy.bounds.y2;++yy) for(int x=hierarchy.bounds.x1;x<hierarchy.bounds.x2;++x) {
+      int xp=std::min(hierarchy.bounds.x2-1,x+1),yp=std::min(hierarchy.bounds.y2-1,yy+1);
+      sg.at(x,yy)=std::hypot(automatic.y.at(xp,yy)-automatic.y.at(x,yy),automatic.y.at(x,yp)-automatic.y.at(x,yy));
+    }
+  }
+  auto output=result.preSpill.view();
+  for(int y=hierarchy.bounds.y1;y<hierarchy.bounds.y2;++y) for(int x=hierarchy.bounds.x1;x<hierarchy.bounds.x2;++x) {
+    float yy=0,aa=0,bb=0;
+    for(int i=0;i<plates.count();++i) {float w=plates.alpha(i).at(x,y);auto app=result.plateAppearance[size_t(i)].view();
+      yy+=w*app.y.at(x,y);aa+=w*app.a.at(x,y);bb+=w*app.b.at(x,y);}
+    output.y.at(x,y)=yy;output.a.at(x,y)=aa;output.b.at(x,y)=bb;
+  }
+  return result;
+}
+} // namespace pigment

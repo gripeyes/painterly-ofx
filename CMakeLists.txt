@@ -54,6 +54,9 @@ add_library(pigment_core STATIC
   src/core/Phase4Types.cpp
   src/core/SpectralMattingBasis.cpp
   src/core/LatentPlateGraph.cpp
+  src/core/RegionHierarchy.cpp
+  src/core/ChunkGradientSynthesis.cpp
+  src/core/PlateSpill.cpp
   src/core/PigmentPhase4.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
