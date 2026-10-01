@@ -58,6 +58,7 @@ add_library(pigment_core STATIC
   src/core/ChunkGradientSynthesis.cpp
   src/core/RegionalEigenField.cpp
   src/core/SparseTransitionField.cpp
+  src/core/LayeredBroadFields.cpp
   src/core/PlateSpill.cpp
   src/core/ColorInteraction.cpp
   src/core/PigmentPhase4.cpp
@@ -161,6 +162,9 @@ if(BUILD_TESTING)
   add_test(NAME pigment_color_interaction_tests COMMAND pigment_color_interaction_tests)
 
   add_executable(pigment_phase4_gate tests/Phase4GateHarness.cpp)
+  add_executable(pigment_layered_broad_tests tests/LayeredBroadFieldsTests.cpp)
+  target_link_libraries(pigment_layered_broad_tests PRIVATE pigment_core)
+  add_test(NAME pigment_layered_broad_tests COMMAND pigment_layered_broad_tests)
   target_link_libraries(pigment_phase4_gate PRIVATE pigment_core)
 
   add_executable(pigment_backend_benchmark tests/BackendBenchmark.cpp)

@@ -5,6 +5,7 @@
 #include "core/RegionHierarchy.h"
 #include "core/RegionalEigenField.h"
 #include "core/SparseTransitionField.h"
+#include "core/LayeredBroadFields.h"
 #include "Phase4BarrierAblation.h"
 #include "Phase4ResearchSnapshot.h"
 
@@ -202,6 +203,7 @@ void writeComponentDiagnostics(
 }
 } // namespace
 #include "Phase4ComparativePipeline.h"
+#include "Phase4LayeredBroadHarness.h"
 #include "Phase4ReachComparison.h"
 #include "Phase4ColorComparison.h"
 
@@ -259,12 +261,13 @@ int main(int argc, char **argv) {
     bool repairedReach=std::string(argv[argc-1])=="--repaired-spill-comparison";
     bool materialOnly=std::string(argv[argc-1])=="--color-material-diagnostics";
     bool colorCompare=std::string(argv[argc-1])=="--color-interaction-comparison" || materialOnly;
-    bool comparative=std::string(argv[argc-1])=="--comparative-pipeline" || repairedReach || colorCompare;
+    bool layered=std::string(argv[argc-1])=="--layered-broad-comparison";
+    bool comparative=std::string(argv[argc-1])=="--comparative-pipeline" || repairedReach || colorCompare || layered;
     if(comparative && !colorCompare && !std::filesystem::exists(outputDir/"source.ppm"))std::filesystem::copy_file(argv[1],outputDir/"source.ppm");
     auto cachePath=outputDir/"shared-upstream.snapshot";
     auto cacheKey=research::key(static_cast<const pigment::OwnedYabPlanes&>(yab).view(),params);
     bool cached=comparative && std::filesystem::exists(cachePath);
-    if(colorCompare && !cached)throw std::runtime_error("Color comparison requires a frozen upstream snapshot");
+    if((colorCompare || layered) && !cached)throw std::runtime_error("Isolated comparison requires a frozen upstream snapshot");
     pigment::Phase4AutomaticResult result(bounds,params.latentCount,params.plateCount);
     pigment::Phase4RegionHierarchy hierarchy;
     if(cached)research::loadSnapshot(cachePath,cacheKey,result,hierarchy);
@@ -358,6 +361,7 @@ int main(int argc, char **argv) {
                plateHierarchy.abRetainedBoundaries.view());
     }
     }
+    if(layered){research::layeredComparison(outputDir,constant,hierarchy,transform);return 0;}
     if(colorCompare){research::colorComparison(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform,materialOnly);return 0;}
     if(repairedReach){research::repairedReachComparison(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform);return 0;}
     if(comparative){if(!cached)research::saveSnapshot(cachePath,cacheKey,constant,hierarchy);
