@@ -3,6 +3,7 @@
 #include "core/IntegratedPigment.h"
 #include "core/PigmentPhase33.h"
 #include "core/PigmentPhase4.h"
+#include "core/PigmentControls.h"
 #include "ofx/OfxImageHelpers.h"
 #include "ofx/ParameterHelpers.h"
 #include "ofxGPURender.h"
@@ -78,6 +79,12 @@ constexpr const char* kPhase33StructurePreserve = "phase33StructurePreserve";
 constexpr const char* kTransitionSolver = "phase33TransitionSolver";
 constexpr const char* kComputeBackend = "phase33ComputeBackend";
 constexpr const char* kPhase4PlateCount = "phase4PlateCount";
+constexpr const char* kPigmentInterface = "pigmentInterface";
+constexpr const char* kPigmentCopy = "pigmentCopyToResearch";
+constexpr const char* kIndependentComplexity = "phase4IndependentComplexity";
+constexpr const char* kYComplexity = "phase4YComplexity";
+constexpr const char* kABComplexity = "phase4ABComplexity";
+constexpr std::array<const char*,10> kArtistParams{"pigmentPictorialScale","pigmentStructureLock","pigmentLumaOrganization","pigmentChromaOrganization","pigmentLumaComplexity","pigmentChromaComplexity","pigmentChromaSpread","pigmentSpill","pigmentSpillReach","pigmentDirectionality"};
 constexpr const char* kPhase4Representation = "phase4Representation";
 constexpr const char* kPhase4YSupport = "phase4YSupport";
 constexpr const char* kPhase4ABSupport = "phase4ABSupport";
@@ -180,6 +187,11 @@ class PigmentEffect final : public OFX::ImageEffect {
     transitionSolver_ = fetchChoiceParam(kTransitionSolver);
     computeBackend_ = fetchChoiceParam(kComputeBackend);
     phase4PlateCount_ = fetchIntParam(kPhase4PlateCount);
+    pigmentInterface_=fetchChoiceParam(kPigmentInterface);
+    pigmentCopy_=fetchPushButtonParam(kPigmentCopy);
+    independentComplexity_=fetchBooleanParam(kIndependentComplexity);
+    yComplexity_=fetchDoubleParam(kYComplexity);abComplexity_=fetchDoubleParam(kABComplexity);
+    for(int i=0;i<10;++i)artistParams_[i]=fetchDoubleParam(kArtistParams[i]);
     phase4Representation_ = fetchChoiceParam(kPhase4Representation);
     phase4YSupport_ = fetchDoubleParam(kPhase4YSupport);
     phase4ABSupport_ = fetchDoubleParam(kPhase4ABSupport);
@@ -209,6 +221,7 @@ class PigmentEffect final : public OFX::ImageEffect {
       planeBBias_[i] = fetchDoubleParam(kPlaneBBias[i]);
       planeChromaInfluence_[i] = fetchDoubleParam(kPlaneChromaInfluence[i]);
     }
+    updateInterface(0);
   }
 
   void render(const OFX::RenderArguments& args) override;
@@ -220,9 +233,16 @@ class PigmentEffect final : public OFX::ImageEffect {
                             OFX::RegionOfInterestSetter& rois) override;
   void purgeCaches() override;
   void endSequenceRender(const OFX::EndSequenceRenderArguments&) override;
+  void changedParam(const OFX::InstanceChangedArgs& args,const std::string& name) override;
 
  private:
   IntegratedPigmentParams parameters(double time) const;
+  void updateInterface(double time);
+  OFX::ChoiceParam* pigmentInterface_=nullptr;
+  OFX::PushButtonParam* pigmentCopy_=nullptr;
+  OFX::BooleanParam* independentComplexity_=nullptr;
+  OFX::DoubleParam *yComplexity_=nullptr,*abComplexity_=nullptr;
+  std::array<OFX::DoubleParam*,10> artistParams_{};
   OFX::Clip *destination_ = nullptr, *source_ = nullptr, *mask_ = nullptr, *planeMap_ = nullptr;
   OFX::DoubleParam *amount_ = nullptr, *massScale_ = nullptr, *massStrength_ = nullptr,
       *toneSimilarity_ = nullptr, *chromaSimilarity_ = nullptr, *lumaAttraction_ = nullptr,
@@ -336,7 +356,7 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   p.phase33.backend = static_cast<PigmentComputeBackend>(std::max(0, std::min(2, value)));
   p.phase4.plateCount = std::max(4, std::min(8, phase4PlateCount_->getValueAtTime(time)));
   phase4Representation_->getValueAtTime(time,value);
-  p.phase4.representation=static_cast<Phase4Representation>(std::max(0,std::min(3,value)));
+  p.phase4.representation=static_cast<Phase4Representation>(std::max(0,std::min(4,value)));
   p.phase4.ySupport=float(phase4YSupport_->getValueAtTime(time));
   p.phase4.abSupport=float(phase4ABSupport_->getValueAtTime(time));
   p.phase4.latentCount = std::max(12, std::min(24, phase4LatentCount_->getValueAtTime(time)));
@@ -352,6 +372,10 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   VALUE_PHASE4(phase4SpillReach_, spillReach); VALUE_PHASE4(phase4SpillAsymmetry_, spillAsymmetry);
   VALUE_PHASE4(phase4ChromaSpill_, chromaSpill); VALUE_PHASE4(phase4LumaSpill_, lumaSpill);
   VALUE_PHASE4(phase4StructureRespect_, structureRespect);
+  if(independentComplexity_->getValueAtTime(time)){
+    p.phase4.yGradientComplexity=float(yComplexity_->getValueAtTime(time));
+    p.phase4.abGradientComplexity=float(abComplexity_->getValueAtTime(time));
+  }
 #undef VALUE_PHASE4
   for(int i=0;i<8;++i){auto&control=p.phase4.plates[i];control.enabled=phase4PlateEnable_[i]->getValueAtTime(time);control.weight=float(phase4PlateWeight_[i]->getValueAtTime(time));control.tone=float(phase4PlateTone_[i]->getValueAtTime(time));control.biasA=float(phase4PlateBiasA_[i]->getValueAtTime(time));control.biasB=float(phase4PlateBiasB_[i]->getValueAtTime(time));control.spillOut=float(phase4PlateSpillOut_[i]->getValueAtTime(time));control.receiveSpill=float(phase4PlateReceive_[i]->getValueAtTime(time));}
   MatrixOpponentTransform opponent(p.gamut);
@@ -370,7 +394,51 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
     plane.bBias = static_cast<float>(planeBBias_[i]->getValueAtTime(time));
     plane.chromaInfluence = static_cast<float>(planeChromaInfluence_[i]->getValueAtTime(time));
   }
+  pigmentInterface_->getValueAtTime(time,value);
+  if(value!=0)p.comparison=PigmentComparisonMode::AutomaticPlateGraph;
+  if(value==1){
+    PigmentControls c{float(artistParams_[0]->getValueAtTime(time)),float(artistParams_[1]->getValueAtTime(time)),float(artistParams_[2]->getValueAtTime(time)),float(artistParams_[3]->getValueAtTime(time)),float(artistParams_[4]->getValueAtTime(time)),float(artistParams_[5]->getValueAtTime(time)),float(artistParams_[6]->getValueAtTime(time)),float(artistParams_[7]->getValueAtTime(time)),float(artistParams_[8]->getValueAtTime(time)),float(artistParams_[9]->getValueAtTime(time))};
+    p.phase4=mapPigmentControls(c,p.phase4);p.debugView=PigmentDebugView::Final;
+  }
   return p;
+}
+
+void PigmentEffect::updateInterface(double time){
+  int mode=0,comparison=0;pigmentInterface_->getValueAtTime(time,mode);comparison_->getValueAtTime(time,comparison);
+  fetchGroupParam("pigmentArtistGroup")->setIsSecret(mode!=1);
+  for(auto* p:artistParams_){p->setIsSecret(mode!=1);p->setEnabled(mode==1);}
+  pigmentCopy_->setIsSecret(mode!=1);pigmentCopy_->setEnabled(mode==1);
+  for(const char* group:{"painterlyGroup","structureGroup","spatialGroup","detailGroup","chromaGroup","pictorialPlanesGroup","pictorialInformationGroup","pictorialTransitionsGroup","phase33Group"})fetchGroupParam(group)->setIsSecret(mode!=0);
+  fetchGroupParam("phase4Group")->setIsSecret(mode==1 || (mode==0 && comparison!=6));
+  fetchGroupParam("advancedGroup")->setIsSecret(mode==1);
+  comparison_->setIsSecret(mode!=0);comparison_->setEnabled(mode==0);
+  for(auto* p:{regionSoftness_,modeSelectivity_,boundaryScale_,veilTonalBias_,chromaLumaCoupling_})p->setIsSecret(mode!=0);
+  debugPlane_->setIsSecret(mode!=0);
+  int representation=0;phase4Representation_->getValueAtTime(time,representation);
+  bool independent=independentComplexity_->getValueAtTime(time),field=representation==0 || representation==4;
+  yComplexity_->setEnabled(mode!=1 && independent && field);abComplexity_->setEnabled(mode!=1 && independent && field);
+  phase4GradientComplexity_->setEnabled(mode!=1 && !independent && field);
+}
+
+void PigmentEffect::changedParam(const OFX::InstanceChangedArgs& args,const std::string& name){
+  if(name==kPigmentCopy){
+    int mode=0;pigmentInterface_->getValueAtTime(args.time,mode);if(mode!=1)return;
+    const auto p=parameters(args.time).phase4;
+    beginEditBlock("Copy Pigment mapping to Research");
+    try {
+      phase4Representation_->setValueAtTime(args.time,0);
+#define COPY_PHASE4(param,field) param->setValueAtTime(args.time,p.field)
+      COPY_PHASE4(phase4PlateScale_,plateScale);COPY_PHASE4(phase4PlateOverlap_,plateOverlap);COPY_PHASE4(phase4ChromaSupportRatio_,chromaSupportRatio);
+      COPY_PHASE4(phase4Coupling_,lumaChromaCoupling);COPY_PHASE4(phase4BoundaryLock_,boundaryLock);COPY_PHASE4(phase4MergeSelectivity_,mergeSelectivity);COPY_PHASE4(phase4InternalVariation_,internalVariation);
+      COPY_PHASE4(phase4LumaChunkScale_,lumaChunkScale);COPY_PHASE4(phase4ChromaChunkScale_,chromaChunkScale);COPY_PHASE4(phase4YSupport_,ySupport);COPY_PHASE4(phase4ABSupport_,abSupport);
+      COPY_PHASE4(phase4SpillAmount_,spillAmount);COPY_PHASE4(phase4SpillReach_,spillReach);COPY_PHASE4(phase4SpillAsymmetry_,spillAsymmetry);COPY_PHASE4(phase4LumaSpill_,lumaSpill);COPY_PHASE4(phase4ChromaSpill_,chromaSpill);COPY_PHASE4(phase4StructureRespect_,structureRespect);
+#undef COPY_PHASE4
+      yComplexity_->setValueAtTime(args.time,p.yGradientComplexity);abComplexity_->setValueAtTime(args.time,p.abGradientComplexity);independentComplexity_->setValue(true);
+      debug_->setValueAtTime(args.time,0);pigmentInterface_->setValue(2);
+      endEditBlock();
+    }catch(...){endEditBlock();throw;}
+  }
+  if(name==kPigmentInterface || name==kComparison || name==kPigmentCopy || name==kIndependentComplexity || name==kPhase4Representation)updateInterface(args.time);
 }
 
 bool PigmentEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& clip,
@@ -602,8 +670,28 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   }
   auto* output = d.defineClip(kOfxImageEffectOutputClipName); addComponents(output);
 
+  auto* interface=d.defineChoiceParam(kPigmentInterface);interface->setLabels("Interface","Interface","Interface");interface->setScriptName(kPigmentInterface);
+  interface->appendOption("Existing Comparisons");interface->appendOption("Pigment");interface->appendOption("Research / Compare");interface->setDefault(0);interface->setAnimates(false);
+  interface->setHint("Pigment is an opt-in image-making macro layer over Phase 4 C1. Research exposes C0-C4 and stage diagnostics. Existing Comparisons preserves saved nodes and defaults.");
+  auto* artist=group(d,"pigmentArtistGroup","Pigment",true);artist->setIsSecret(true);
+  constexpr std::array<const char*,10> artistLabels{"Pictorial Scale","Structure Lock","Luma Organization","Chroma Organization","Luma Complexity","Chroma Complexity","Chroma Spread","Spill","Spill Reach","Spill Directionality / Asymmetry"};
+  constexpr std::array<double,10> artistDefaults{48,.75,.5,2./3.,.5,.25,1./3.,.25,48,.5};
+  constexpr std::array<const char*,10> artistHints{
+    "Common canonical-pixel scale for plate grouping and independent Y/AB hierarchy cuts; never a blur radius",
+    "Coordinates boundary lock, merge discrimination, tolerated internal variation and Spill permeability",
+    "Y hierarchy organization relative to Pictorial Scale; zero bypasses Y field synthesis and Y Spill",
+    "Independent AB hierarchy organization, up to twice Pictorial Scale; zero bypasses AB synthesis and AB Spill",
+    "Y source-gradient survival inside retained chunks; higher preserves more internal description",
+    "Independent AB source-gradient survival; lower permits broader chromatic fields",
+    "Coordinates AB graph-support extent, participation strength and chroma Spill; independent of chunk cuts",
+    "Overall directed plate interaction, conservative Y and organization/spread-dependent AB; zero bypasses all Spill",
+    "Canonical-pixel e-fold graph travel distance, independent of amplitude; zero keeps intrinsic support exactly",
+    "Zero symmetrizes interaction; one retains directed donor/receiver transport"};
+  for(int i=0;i<10;++i){bool physical=i==0 || i==8;auto* parameter=number(d,*artist,kArtistParams[i],artistLabels[i],artistDefaults[i],i==0?4:0,physical?256:1,physical?128:1,artistHints[i],physical?OFX::eDoubleTypePlain:OFX::eDoubleTypeScale);parameter->setIsSecret(true);}
+  auto* copy=d.definePushButtonParam(kPigmentCopy);copy->setLabels("Copy to Research","Copy to Research","Copy to Research");copy->setScriptName(kPigmentCopy);copy->setParent(*artist);copy->setIsSecret(true);copy->setHint("Copy this frame's evaluated Pigment mapping into Research controls and switch interfaces without changing the image. Existing research values are replaced only by this explicit action.");
+
   auto* painterly = group(d, "painterlyGroup", "Painterly");
-  number(d, *painterly, kAmount, "Amount", 0.7, 0, 1, 1, "Overall integrated processing strength", OFX::eDoubleTypeScale);
+  auto* amount=number(d, *painterly, kAmount, "Amount", 0.7, 0, 1, 1, "Overall integrated processing strength", OFX::eDoubleTypeScale);
   number(d, *painterly, kMassScale, "Mass Scale", 18, 0.25, 256, 96, "Physical radius across which soft regions can form");
   number(d, *painterly, kMassStrength, "Mass Strength", 0.55, 0, 1, 1, "Continuous attraction toward local soft modes", OFX::eDoubleTypeScale);
   number(d, *painterly, kToneSimilarity, "Tone Similarity", 0.25, 0.001, 16, 2, "Y feature bandwidth");
@@ -638,6 +726,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   number(d, *chroma, kChromaEdgeRespect, "Chroma Edge Respect", 0.6, 0, 1, 1, "How strongly significant boundaries inhibit chroma", OFX::eDoubleTypeScale);
 
   auto* outputGroup = group(d, "outputGroup", "Output");
+  amount->setParent(*outputGroup);
   number(d, *outputGroup, kMix, "Mix", 1, 0, 1, 1, "Final straight-RGB blend", OFX::eDoubleTypeScale);
 
   auto* planes = group(d, "pictorialPlanesGroup", "Pictorial Planes", false);
@@ -743,8 +832,8 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   backend->appendOption("Metal"); backend->appendOption("CPU Reference");
   backend->setDefault(0); backend->setParent(*solver);
 
-  auto* phase4 = group(d, "phase4Group", "Automatic Plate Graph (Phase 4)", false);
-  auto* representation=d.defineChoiceParam(kPhase4Representation);representation->setLabels("Research Representation","Research Representation","Research Representation");representation->setScriptName(kPhase4Representation);representation->appendOption("C1 Bounded Poisson");representation->appendOption("C0 A3 Passthrough");representation->appendOption("C3 Regional Eigen (Y2 / AB1)");representation->appendOption("C4 Sparse Curve / Field");representation->setDefault(0);representation->setParent(*phase4);representation->setHint("CPU research comparisons, not photographic acceptance. C2 remains a standalone baseline.");
+  auto* phase4 = group(d, "phase4Group", "Research / Compare — Phase 4", false);
+  auto* representation=d.defineChoiceParam(kPhase4Representation);representation->setLabels("Research Representation","Research Representation","Research Representation");representation->setScriptName(kPhase4Representation);representation->appendOption("C1 Bounded Poisson");representation->appendOption("C0 A3 Passthrough");representation->appendOption("C3 Regional Eigen (Y2 / AB1)");representation->appendOption("C4 Sparse Curve / Field");representation->appendOption("C2 Preserved Second Moments");representation->setDefault(0);representation->setParent(*phase4);representation->setHint("Named CPU comparison baselines, not photographic acceptance. C2 is the preserved fixed moment experiment, not an acceleration target.");
   number(d,*phase4,kPhase4YSupport,"Y Support Strength",1,0,2,2,"Intrinsic support participation amplitude; does not expand alpha or change spectral extraction");
   number(d,*phase4,kPhase4ABSupport,"AB Support Strength",1,0,2,2,"Intrinsic AB support participation amplitude; Plate Scale/Overlap and Chroma Support Ratio control graph extent");
   auto* phase4Auto = group(d, "phase4AutoGroup", "Auto Plates", true); phase4Auto->setParent(*phase4);
@@ -760,6 +849,9 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   number(d,*phase4Chunk,kPhase4MergeSelectivity,"Merge Selectivity",.6,0,1,1,"Sensitivity to appearance and gradient disagreement",OFX::eDoubleTypeScale);
   number(d,*phase4Chunk,kPhase4InternalVariation,"Internal Variation",.45,0,1,1,"Variation tolerated during region merging",OFX::eDoubleTypeScale);
   number(d,*phase4Chunk,kPhase4GradientComplexity,"Gradient Complexity",.35,0,1,1,"Primitive acceptance and residual-gradient survival",OFX::eDoubleTypeScale);
+  auto* independent=ofx::defineBoolean(d,kIndependentComplexity,"Independent Y/AB Complexity",false,"Enable separate C1/C2 field complexities; off preserves historical shared Gradient Complexity");independent->setAnimates(false);independent->setParent(*phase4Chunk);
+  number(d,*phase4Chunk,kYComplexity,"Y Field Complexity",.35,0,1,1,"Independent Y source-gradient survival in C1/C2",OFX::eDoubleTypeScale);
+  number(d,*phase4Chunk,kABComplexity,"AB Field Complexity",.35,0,1,1,"Independent AB source-gradient survival in C1/C2",OFX::eDoubleTypeScale);
   auto* phase4Spill=group(d,"phase4SpillGroup","Plate Interaction",false);phase4Spill->setParent(*phase4);
   number(d,*phase4Spill,kPhase4SpillAmount,"Spill Amount",.25,0,1,1,"Directed graph-based plate interaction",OFX::eDoubleTypeScale);
   number(d,*phase4Spill,kPhase4SpillReach,"Spill Reach",48,0,256,128,"E-fold directed graph-distance attenuation scale, independent of seed amplitude; zero keeps intrinsic support exactly");
@@ -785,9 +877,9 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   auto* gamut = d.defineChoiceParam(kWorkingGamut); gamut->setLabels("Working Gamut", "Working Gamut", "Working Gamut");
   gamut->setScriptName(kWorkingGamut); gamut->appendOption("ACEScg");
   gamut->appendOption("Linear Rec.709 / sRGB Primaries"); gamut->appendOption("Linear Rec.2020");
-  gamut->appendOption("Display P3 D65 Primaries"); gamut->setDefault(0); gamut->setParent(*advanced);
+  gamut->appendOption("Display P3 D65 Primaries"); gamut->setDefault(0); gamut->setParent(*outputGroup);
   auto* invert = ofx::defineBoolean(d, kInvertMask, "Invert Mask", false, "Invert the optional external mask");
-  invert->setParent(*advanced);
+  invert->setParent(*outputGroup);
   auto* comparison = d.defineChoiceParam(kComparison); comparison->setLabels("Comparison", "Comparison", "Comparison");
   comparison->setScriptName(kComparison); comparison->appendOption("Original");
   comparison->appendOption("Current Guided DetailCollapse");

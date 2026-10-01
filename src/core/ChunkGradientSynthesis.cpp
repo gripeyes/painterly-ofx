@@ -492,13 +492,13 @@ Phase4ChunkSynthesis synthesizePhase4Chunks(ConstYabPlanes source,
     result.broadConstraintInfluence.emplace_back(hierarchy.bounds);
     auto automatic=plates.appearance(plate);const auto &h=hierarchy.plates[size_t(plate)];
     auto y=synthesizeChannel(automatic.y,plates.supportY(plate),h.yChunk,h.yChunkCount,h.yEdgeX,h.yEdgeY,
-                             params.lumaChunkScale,params.gradientComplexity,execution,
+                             params.lumaChunkScale,params.yGradientComplexity<0?params.gradientComplexity:params.yGradientComplexity,execution,
                              broadForm.enabled,broadForm.spacingY,broadForm.strengthY,broadForm.firstStrengthY,broadForm.secondStrengthY);
     auto a=synthesizeChannel(automatic.a,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
-                             params.chromaChunkScale,params.gradientComplexity,execution,
+                             params.chromaChunkScale,params.abGradientComplexity<0?params.gradientComplexity:params.abGradientComplexity,execution,
                              broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB,broadForm.firstStrengthAB,broadForm.secondStrengthAB);
     auto b=synthesizeChannel(automatic.b,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
-                             params.chromaChunkScale,params.gradientComplexity,execution,
+                             params.chromaChunkScale,params.abGradientComplexity<0?params.gradientComplexity:params.abGradientComplexity,execution,
                              broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB,broadForm.firstStrengthAB,broadForm.secondStrengthAB);
     result.solver.push_back({y.solver,a.solver,b.solver});
     auto out=result.plateAppearance.back().view();copyChannel(y.values,out.y);copyChannel(a.values,out.a);copyChannel(b.values,out.b);

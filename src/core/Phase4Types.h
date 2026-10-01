@@ -11,8 +11,8 @@ namespace pigment {
 
 constexpr int kPhase4LatentCapacity = 24;
 constexpr int kPhase4PlateCapacity = 8;
-// Research selectors only; C2 remains a standalone preserved baseline.
-enum class Phase4Representation { Poisson = 0, A3Passthrough, RegionalEigen, SparseCurve };
+// CPU research selectors; C2 is a preserved baseline, not an acceleration target.
+enum class Phase4Representation { Poisson = 0, A3Passthrough, RegionalEigen, SparseCurve, SecondMoments };
 
 enum class Phase4DebugView {
   Final = 0,
@@ -57,6 +57,8 @@ struct Phase4Params {
   float mergeSelectivity = 0.6f;
   float internalVariation = 0.45f;
   float gradientComplexity = 0.35f;
+  // Negative means use the historic shared scalar, preserving saved renders.
+  float yGradientComplexity = -1.0f, abGradientComplexity = -1.0f;
   float spillAmount = 0.25f;
   float spillReach = 48.0f;
   float spillAsymmetry = 0.5f;

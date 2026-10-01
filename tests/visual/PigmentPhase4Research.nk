@@ -23,6 +23,16 @@ Reformat {
 }
 set source [stack 0]
 OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 1
+ name Pigment_Artist
+ label "Pigment macros — C1 research field\nCopy to Research to inspect this mapping"
+ xpos -200
+ ypos 250
+}
+set artist [stack 0]
+push $source
+OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
  comparisonMode 6
  phase4Representation 1
  phase4SpillAmount 0.8
@@ -37,6 +47,7 @@ OFXorg.painterlyofx.Pigment_v1 {
 set c0 [stack 0]
 push $source
 OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
  comparisonMode 6
  phase4Representation 0
  phase4SpillAmount 0.8
@@ -51,6 +62,7 @@ OFXorg.painterlyofx.Pigment_v1 {
 set c1 [stack 0]
 push $source
 OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
  comparisonMode 6
  phase4Representation 2
  phase4SpillAmount 0.8
@@ -65,6 +77,7 @@ OFXorg.painterlyofx.Pigment_v1 {
 set c3 [stack 0]
 push $source
 OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
  comparisonMode 6
  phase4Representation 3
  phase4SpillAmount 0.8
@@ -76,11 +89,23 @@ OFXorg.painterlyofx.Pigment_v1 {
  xpos 600
  ypos 250
 }
+set c4 [stack 0]
+push $source
+OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
+ phase4Representation 4
+ name C2_PreservedMoments
+ label "C2 preserved negative baseline — not an acceleration target"
+ xpos 800
+ ypos 250
+}
+push $c4
 push $c3
 push $c1
 push $c0
+push $artist
 Viewer {
- inputs 4
+ inputs 6
  name ResearchViewer
  xpos 300
  ypos 450

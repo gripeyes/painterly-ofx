@@ -94,9 +94,16 @@ processPigmentPhase4(const Phase4RenderInputs &in,
     cache.supported=std::move(supported);cache.hierarchy=std::move(next);cache.hierarchyKey=hkey;cache.synthesis.reset();++cache.hierarchyBuilds;
   }
   auto skey=hkey;skey.push_back(int(p.phase4.representation));skey.push_back(p.phase4.gradientComplexity);
+  skey.push_back(p.phase4.yGradientComplexity);skey.push_back(p.phase4.abGradientComplexity);
   if(!cache.synthesis || cache.synthesisKey!=skey){
     auto next=std::make_unique<Phase4ChunkSynthesis>(b);
     if(p.phase4.representation==Phase4Representation::Poisson)*next=synthesizePhase4Chunks(static_cast<const OwnedYabPlanes&>(original).view(),*cache.supported,*cache.hierarchy,p.phase4,execution);
+    else if(p.phase4.representation==Phase4Representation::SecondMoments){
+      Phase4BroadFormOptions preserved;preserved.enabled=true;
+      preserved.firstStrengthY=20;preserved.firstStrengthAB=2.5;
+      preserved.secondStrengthY=20;preserved.secondStrengthAB=1.25;
+      *next=synthesizePhase4Chunks(static_cast<const OwnedYabPlanes&>(original).view(),*cache.supported,*cache.hierarchy,p.phase4,execution,preserved);
+    }
     else if(p.phase4.representation==Phase4Representation::RegionalEigen){auto eigen=regionalEigenFieldSweep(*cache.supported,*cache.hierarchy,execution,false,true);next->plateAppearance=std::move(eigen.results.front().appearance);}
     else if(p.phase4.representation==Phase4Representation::SparseCurve){auto curves=sparseTransitionField(*cache.supported,*cache.hierarchy,execution);next->plateAppearance=std::move(curves.appearance);}
     else for(int i=0;i<cache.supported->count();++i){next->plateAppearance.emplace_back(b);auto from=cache.supported->appearance(i);auto to=next->plateAppearance.back().view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){to.y.at(x,y)=from.y.at(x,y);to.a.at(x,y)=from.a.at(x,y);to.b.at(x,y)=from.b.at(x,y);}}

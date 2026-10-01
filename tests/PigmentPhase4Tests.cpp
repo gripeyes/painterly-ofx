@@ -1,6 +1,7 @@
 #include "core/ChunkGradientSynthesis.h"
 #include "core/LatentPlateGraph.h"
 #include "core/PigmentPhase4.h"
+#include "core/PigmentControls.h"
 #include "core/PlateSpill.h"
 #include "core/RegionHierarchy.h"
 #include "Phase4BarrierAblation.h"
@@ -30,6 +31,26 @@ pigment::OwnedYabPlanes fixture(pigment::RectI b) {
       v.b.at(x, y) = fx < .45f ? -.3f : .5f;
     }
   return image;
+}
+
+void artistControlMapping() {
+  pigment::PigmentControls c;
+  pigment::Phase4Params expert;expert.plateCount=8;expert.latentCount=14;expert.plates[0].biasA=.2f;
+  auto p=pigment::mapPigmentControls(c,expert);
+  check(p.plateCount==8 && p.latentCount==14 && p.plates[0].biasA==.2f,"Artist mapping preserves expert vocabulary and overrides");
+  check(p.representation==pigment::Phase4Representation::Poisson,"Artist complexity uses C1 field semantics");
+  c.pictorialScale*=2;auto large=pigment::mapPigmentControls(c);
+  check(large.plateScale==2*p.plateScale && large.lumaChunkScale==2*p.lumaChunkScale && large.chromaChunkScale==2*p.chromaChunkScale,"Pictorial Scale coordinates vocabulary and independent hierarchy cuts");
+  c.lumaOrganization=c.chromaOrganization=0;auto zero=pigment::mapPigmentControls(c);
+  check(zero.lumaChunkScale==0 && zero.chromaChunkScale==0 && zero.lumaSpill==0 && zero.chromaSpill==0,"Zero organization bypasses each field and its interaction");
+  check(pigment::phase4SupportRadiusAB(zero)==pigment::phase4SupportRadiusAB(large),"Organization cannot silently change support extent");
+  c.chromaSpread=1;auto spread=pigment::mapPigmentControls(c);
+  check(pigment::phase4SupportRadiusAB(spread)>pigment::phase4SupportRadiusAB(zero) && spread.lumaChunkScale==zero.lumaChunkScale && spread.yGradientComplexity==zero.yGradientComplexity,"Chroma Spread broadens AB independently from Y organization");
+  c.structureLock=1;auto locked=pigment::mapPigmentControls(c);
+  check(locked.boundaryLock>spread.boundaryLock && locked.mergeSelectivity>spread.mergeSelectivity && locked.internalVariation<spread.internalVariation && locked.structureRespect>spread.structureRespect,"Structure Lock coordinates boundary selectivity and transport");
+  c.pictorialScale=-10;c.spillReach=1000;c.lumaComplexity=-1;c.chromaComplexity=2;
+  auto bounded=pigment::mapPigmentControls(c);
+  check(bounded.plateScale==4 && bounded.spillReach==256 && bounded.yGradientComplexity==0 && bounded.abGradientComplexity==1,"Artist mapping clamps research domain predictably");
 }
 
 void parameterSemantics() {
@@ -334,6 +355,29 @@ void primitiveGradientSurvival() {
   check(result.primitiveSelection[0].view().at(16,16)>0 &&
         result.primitiveSelection[0].view().at(16,16)<.5f,
         "gradient-survival fixture actually selects an affine candidate");
+  // Channel controls must change their own field, not the other family.
+  for(int i=0;i<4;++i)for(int y=0;y<32;++y)for(int x=0;x<32;++x){
+    float v=.1f+.005f*x+(((x+y)&1)?-.0002f:.0002f);
+    plates.appearance(i).a.at(x,y)=image.view().a.at(x,y)=v;
+    plates.appearance(i).b.at(x,y)=image.view().b.at(x,y)=-v;
+  }
+  auto legacy=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  params.yGradientComplexity=params.abGradientComplexity=params.gradientComplexity;
+  auto split=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  params.yGradientComplexity=1;
+  auto yChanged=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  params.yGradientComplexity=.35f;params.abGradientComplexity=1;
+  auto abChanged=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  bool dy=false,dab=false;
+  auto lv=legacy.plateAppearance[0].view(),sv=split.plateAppearance[0].view(),yv=yChanged.plateAppearance[0].view(),av=abChanged.plateAppearance[0].view();
+  for(int y=0;y<32;++y)for(int x=0;x<32;++x){
+    check(lv.y.at(x,y)==sv.y.at(x,y) && lv.a.at(x,y)==sv.a.at(x,y) && lv.b.at(x,y)==sv.b.at(x,y),"Explicit equal complexities preserve legacy output exactly");
+    check(yv.a.at(x,y)==sv.a.at(x,y) && yv.b.at(x,y)==sv.b.at(x,y),"Y complexity leaves AB bit exact");
+    check(av.y.at(x,y)==sv.y.at(x,y),"AB complexity leaves Y bit exact");
+    dy|=yv.y.at(x,y)!=sv.y.at(x,y);dab|=av.a.at(x,y)!=sv.a.at(x,y);
+  }
+  check(dy && dab,"Independent complexities materially affect their own fields");
+  params.yGradientComplexity=params.abGradientComplexity=-1;
   for(int i=0;i<4;++i) for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
     float v=.5f+(((x+y)&1)?-.0002f:.0002f);
     image.view().y.at(x,y)=plates.appearance(i).y.at(x,y)=v;
@@ -542,7 +586,7 @@ void researchRepresentationsAndCache() {
   pigment::Phase4ResearchCache cache;
   pigment::Phase4RenderInputs in{{src.data(),64,b,4},{dst.data(),64,b,4},b,p,{},nullptr,&cache};
   pigment::processPigmentPhase4(in);auto baseline=dst;
-  for(auto mode:{pigment::Phase4Representation::Poisson,pigment::Phase4Representation::RegionalEigen,pigment::Phase4Representation::SparseCurve}){
+  for(auto mode:{pigment::Phase4Representation::Poisson,pigment::Phase4Representation::RegionalEigen,pigment::Phase4Representation::SparseCurve,pigment::Phase4Representation::SecondMoments}){
     in.params.phase4.representation=mode;pigment::processPigmentPhase4(in);
     check(dst==baseline,"Every research mode honors zero Y/AB chunk bypass exactly");
   }
@@ -558,6 +602,7 @@ void researchRepresentationsAndCache() {
 }
 } // namespace
 int main() {
+  artistControlMapping();
   parameterSemantics();
   automaticPlates();
   regionHierarchy();

@@ -67,7 +67,9 @@ Select Comparison Mode **Automatic Plate Graph (Phase 4)**. The temporary Resear
 - C3 Regional Eigen, fixed representative Y2/AB1 budget; no new mode-count sweep.
 - C4 Sparse Curve / Field, unchanged value-only prototype.
 
-C2 remains a preserved standalone comparison, not an interactive acceleration target.
+C2 is also accessible as a preserved CPU-only second-moment comparison, not an acceleration target. This does not reopen the rejected experiment.
+
+The opt-in **Pigment** macro interface and **Copy to Research** action are documented in `docs/PigmentArtistMode.md`. Existing Comparisons and Representative remain the defaults.
 
 Shared controls include Y/AB Chunk Scale, Boundary Lock, Spill Amount, Y/AB Spill, Reach, Structure Respect, Asymmetry, Amount and Mix. New **Y Support Strength / AB Support Strength** are explicitly participation-amplitude multipliers (0–2, default 1), not spatial radii. Intrinsic graph extent is still controlled by Plate Scale/Overlap and Chroma Support Ratio. Neither support strength nor Spill changes reconstruction alpha. Support edits may affect support-conditioned chunk organization; creative Tone/bias/Weight and Spill edits do not rebuild topology.
 
@@ -92,7 +94,7 @@ All 11 regression suites pass. Added tests cover weak .02 seeds, identical relat
 
 Bundle signature verifies; the installed native module is arm64 and matches the current signed build. Nuke validation still requires an available license.
 
-`tests/visual/PigmentPhase4Research.nk` is a **prepared, not host-verified** four-branch scene using the previously verified OFX class name. It starts at 128 pixels to limit cold CPU cost; replace the Read image or raise the Reformat size for arbitrary plates. `tests/nuke_phase4_research.py` generates a host-verified scene, four renders and fourteen debug renders once licensing is available:
+`tests/visual/PigmentPhase4Research.nk` is a **prepared, not host-verified** six-branch scene (Pigment and C0–C4) using the previously verified OFX class name. It starts at 128 pixels to limit cold CPU cost; replace the Read image or raise the Reformat size for arbitrary plates. `tests/nuke_phase4_research.py` generates the scene, five comparison renders, fourteen debug renders and a Pigment-to-Research snapshot comparison once licensing is available:
 
 ```sh
 /Applications/Nuke17.0v1/Nuke17.0v1.app/Contents/MacOS/Nuke17.0 -t tests/nuke_phase4_research.py

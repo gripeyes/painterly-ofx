@@ -14,13 +14,15 @@ small = nuke.nodes.Reformat(inputs=[source], type="to box", box_width=128, box_h
 small["label"].setValue("CPU research size: raise for hands-on evaluation")
 records = []
 nodes = []
-for value, label in [(1,"C0 A3 Passthrough"),(0,"C1 Bounded Poisson"),(2,"C3 Regional Eigen"),(3,"C4 Sparse Curve")]:
+for value, label in [(1,"C0 A3 Passthrough"),(0,"C1 Bounded Poisson"),(2,"C3 Regional Eigen"),(3,"C4 Sparse Curve"),(4,"C2 Preserved Moments")]:
     node = nuke.createNode(kind, inpanel=False)
     node.setInput(0, small)
-    required = {"phase4Representation", "phase4YSupport", "phase4ABSupport", "phase4SpillReach", "phase4StructureRespect"}
+    required = {"phase4Representation", "phase4YSupport", "phase4ABSupport", "phase4SpillReach", "phase4StructureRespect", "pigmentInterface", "pigmentCopyToResearch", "phase4IndependentComplexity", "phase4YComplexity", "phase4ABComplexity"}
     assert required.issubset(node.knobs()), required.difference(node.knobs())
     # Existing-node default comparison is not changed by descriptor additions.
     assert node["comparisonMode"].value() != "Automatic Plate Graph (Phase 4)"
+    assert node["pigmentInterface"].value() == "Existing Comparisons"
+    node["pigmentInterface"].setValue(2)
     node["comparisonMode"].setValue(6)
     node["phase4Representation"].setValue(value)
     node["phase4SpillAmount"].setValue(.8)
@@ -45,9 +47,39 @@ for i, label in enumerate(required_debug):
     nuke.execute(write, 1, 1)
     nuke.delete(write)
 debug.setValue(0)
+artist = nuke.createNode(kind, inpanel=False)
+artist.setInput(0, small)
+artist["pigmentInterface"].setValue(1)
+artist["pigmentPictorialScale"].setValue(64)
+artist["pigmentLumaOrganization"].setValue(.25)
+artist["pigmentChromaOrganization"].setValue(.75)
+artist["pigmentLumaComplexity"].setValue(.6)
+artist["pigmentChromaComplexity"].setValue(.2)
+artist["pigmentChromaSpread"].setValue(.5)
+artist["label"].setValue("Pigment macros — current C1 research field, not Gate-C acceptance")
+artist_write = nuke.nodes.Write(inputs=[artist], file=os.path.join(OUT, "pigment-macros.exr"), file_type="exr", channels="rgba")
+artist_write["datatype"].setValue("32 bit float")
+nuke.execute(artist_write, 1, 1)
+artist_before = nuke.nodes.Read(file=artist_write["file"].value())
+artist["pigmentCopyToResearch"].execute()
+assert artist["pigmentInterface"].value() == "Research / Compare"
+for name, expected in {"phase4PlateScale":64,"phase4LumaChunkScale":16,"phase4ChromaChunkScale":96,"phase4ChromaSupportRatio":2.5,"phase4YComplexity":.6,"phase4ABComplexity":.2}.items():
+    assert abs(artist[name].value()-expected) < 1e-6, (name, artist[name].value(), expected)
+assert artist["phase4IndependentComplexity"].value()
+artist_write["file"].setValue(os.path.join(OUT, "pigment-copied-to-research.exr"))
+nuke.execute(artist_write, 1, 1)
+artist_after = nuke.nodes.Read(file=artist_write["file"].value())
+sample_error = 0.0
+for y in range(4,128,8):
+    for x in range(4,128,8):
+        for channel in ("red","green","blue","alpha"):
+            sample_error = max(sample_error, abs(nuke.sample(artist_before,channel,x,y)-nuke.sample(artist_after,channel,x,y)))
+assert sample_error == 0, sample_error
+nuke.delete(artist_write)
+nodes.insert(0,artist)
 viewer = nuke.nodes.Viewer(inputs=nodes)
-viewer["label"].setValue("C0 / C1 / C3 / C4 — identical source, independent research nodes")
+viewer["label"].setValue("Pigment / C0 / C1 / C3 / C4 / C2 — identical source")
 nuke.scriptSaveAs(os.path.join(OUT, "PigmentPhase4Research.nk"), overwrite=1)
 with open(os.path.join(OUT, "host-validation.json"), "w") as f:
-    json.dump({"node":kind,"comparisons":records,"debug_views":required_debug,"gate_C":"not accepted"}, f, indent=2)
+    json.dump({"node":kind,"comparisons":records,"debug_views":required_debug,"macro_copy_sample_error":sample_error,"gate_C":"not accepted"}, f, indent=2)
 print("PHASE4_RESEARCH_VALIDATED", OUT)
