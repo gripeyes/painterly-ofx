@@ -16,6 +16,9 @@
 #include <utility>
 #include <vector>
 #include <cstring>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 
 namespace pigment {
 namespace {
@@ -553,7 +556,8 @@ std::vector<std::vector<Sample>> buildSpatialAppearances(
 
 ComponentRecovery recoverComponents(const SpectralBasis &basis,
                                     const SparseAffinityGraph &g, int requested,
-                                    float, Phase4GateDiagnostics &diag) {
+                                    float, Phase4GateDiagnostics &diag,
+                                    const ExecutionContext& execution) {
   const int n = g.nodeCount(), m = basis.count;
   Eigen::MatrixXd vectors(n, m);
   for (int k = 0; k < m; ++k)
@@ -570,7 +574,10 @@ ComponentRecovery recoverComponents(const SpectralBasis &basis,
   std::vector<int> labels;
   int count = std::min(5, requested);
   double bestObjective = std::numeric_limits<double>::infinity();
-  for (int start = 0; start < 7; ++start) {
+  std::array<std::vector<int>,7> candidates;
+  std::array<int,7> candidateCounts{};
+  std::array<double,7> objectives{};
+  execution.parallelRows(0,7,[&](int first,int last){for (int start = first; start < last; ++start) {
     int candidateCount = 0;
     auto candidate =
         progressiveKMeans(features, requested, start, candidateCount);
@@ -589,10 +596,15 @@ ComponentRecovery recoverComponents(const SpectralBasis &basis,
       objective +=
           (features.row(p) - centers.row(candidate[size_t(p)])).squaredNorm();
     objective /= std::max(1, n);
+    candidates[size_t(start)]=std::move(candidate);
+    candidateCounts[size_t(start)]=candidateCount;objectives[size_t(start)]=objective;
+  }});
+  for(int start=0;start<7;++start){
+    double objective=objectives[size_t(start)];
     if (objective < bestObjective) {
       bestObjective = objective;
-      labels = std::move(candidate);
-      count = candidateCount;
+      labels = std::move(candidates[size_t(start)]);
+      count = candidateCounts[size_t(start)];
     }
   }
   Eigen::MatrixXd segments = Eigen::MatrixXd::Zero(n, count);
@@ -621,13 +633,13 @@ ComponentRecovery recoverComponents(const SpectralBasis &basis,
       }
     std::vector<Eigen::MatrixXd> blocks(static_cast<size_t>(count));
     std::vector<Eigen::VectorXd> rhs(static_cast<size_t>(count));
-    for (int c = 0; c < count; ++c) {
+    execution.parallelRows(0,count,[&](int first,int last){for (int c = first; c < last; ++c) {
       Eigen::VectorXd weights = e0.col(c) + e1.col(c);
       blocks[size_t(c)] =
           vectors.transpose() * weights.asDiagonal() * vectors + diagonal;
       rhs[size_t(c)] =
           vectors.transpose() * (c == count - 1 ? e0.col(c) : e1.col(c));
-    }
+    }});
     const int dimension = (count - 1) * m;
     Eigen::MatrixXd system = Eigen::MatrixXd::Zero(dimension, dimension);
     Eigen::VectorXd target(dimension);
@@ -985,6 +997,8 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       std::max(4, std::min(kPhase4PlateCapacity, params.plateCount));
   Phase4AutomaticResult result(source.y.bounds, params.latentCount,
                                params.plateCount);
+  auto profileStart=std::chrono::steady_clock::now();
+  auto profile=[&](const char* stage){auto now=std::chrono::steady_clock::now();if(std::getenv("PIGMENT_PHASE4_PROFILE"))std::fprintf(stderr,"[phase4-analysis] %s %.3f ms\n",stage,std::chrono::duration<double,std::milli>(now-profileStart).count());profileStart=now;};
   // Frozen A1/A2 checkpoint: use the raw deterministic analysis image for the
   // matting eigenspace.  The analysis graph still stores distinct signed
   // W_CMF and non-negative F semantics for downstream support and spill.
@@ -997,6 +1011,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   // appearances are refined below. Avoid copying the entire latent vocabulary.
   auto state=reuse?cache->data:std::make_shared<Phase4AnalysisCacheData>();
   if(!reuse){state->analysis=downsample(source);state->graph=buildGraph(state->analysis,params,geometry);}
+  profile("graph/hash");
   auto& analysis=state->analysis;result.analysisGraph=state->graph;
   const int n = result.analysisGraph.nodeCount();
   auto& exactBasis=state->exactBasis;auto& basis=state->basis;
@@ -1011,6 +1026,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   exactBasis = buildSpectralMattingBasis(
       spectralInput, analysis.width, analysis.height,
       std::min(32, params.latentCount + 8), execution, nullptr, 0.0f);
+  profile("A1 eigenspace");
   if (exactBasis.count < std::min(32, params.latentCount + 8))
     throw std::runtime_error("Phase 4 spectral eigensolver did not converge");
   basis.count = exactBasis.count;
@@ -1029,7 +1045,8 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       std::max(1, int(basis.eigenResidual.size()));
   recovery =
       recoverComponents(basis, result.analysisGraph, params.latentCount,
-                        params.plateOverlap, result.diagnostics);
+                        params.plateOverlap, result.diagnostics,execution);
+  profile("A2 recovery");
   params.latentCount = recovery.count;
   auto &alpha = recovery.values;
   result.latent = LatentComponentSet(source.y.bounds, params.latentCount);
@@ -1054,6 +1071,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   appearance = buildSpatialAppearances(
       analysis, result.analysisGraph, alpha, latentMean,
       params.latentCount, result.diagnostics, result.latent.distributions(), execution);
+  profile("A3 analysis appearance");
   state->distributions=result.latent.distributions();state->diagnostics=result.diagnostics;
   if(execution.cancelled())throw std::runtime_error("Phase 4 source analysis cancelled");
   if(cache){cache->data=state;cache->key=sourceKey;++cache->builds;}
@@ -1091,6 +1109,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
                                   : analysis.pixels[p];
     }
 
+  result.analysisPlateAlpha=plateAlpha;
   Eigen::MatrixXd publicGram =
       Eigen::MatrixXd::Zero(params.plateCount, params.plateCount);
   double publicError = 0.0;
@@ -1138,6 +1157,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
                           rab / sourcePerAnalysis, params.structureRespect);
   }
   });
+  profile("grouping/support");
   std::vector<float> spectralScale(exactBasis.count, 1.0f);
   for (int mode = 0; mode < exactBasis.count; ++mode) {
     float maximum = 0;
@@ -1198,13 +1218,16 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       }
     }
   // Lift colors under the original full-resolution source constraint.
+  profile("full-resolution extension");
   // Independent interpolation of alpha and color does not preserve their
   // product and formerly returned an analysis-resolution photograph.
   // This is fixed-alpha color refinement, never occupancy/confidence fallback.
   double fullError = 0;
   const auto &grid=result.latent.distributions();
+  std::vector<double> pixelErrors(size_t(b.width())*b.height());
+  execution.parallelRows(b.y1,b.y2,[&](int first,int last){
   std::vector<Eigen::Matrix3d> covariances{size_t(params.latentCount)};
-  for(int y=b.y1;y<b.y2;++y) for(int x=b.x1;x<b.x2;++x) {
+  for(int y=first;y<last;++y) for(int x=b.x1;x<b.x2;++x) {
     if(x==b.x1 && execution.cancelled())
       throw std::runtime_error("Phase 4 full-resolution appearance cancelled");
     if(!reuseFull){
@@ -1250,11 +1273,15 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       out.y.at(x,y)=float(v[0]);out.a.at(x,y)=float(v[1]);out.b.at(x,y)=float(v[2]);
       check+=result.plates.alpha(i).at(x,y)*v;
     }
-    double error=(check-original).squaredNorm();fullError+=error;
+    double error=(check-original).squaredNorm();pixelErrors[size_t(y-b.y1)*b.width()+x-b.x1]=error;
     result.latent.reconstructionError().at(x,y)=float(std::sqrt(error));
   }
+  });
+  // Preserve the reference reduction order regardless of worker partitions.
+  for(double error:pixelErrors)fullError+=error;
   result.diagnostics.fullResolutionReconstructionError=
       float(std::sqrt(fullError/std::max(1,b.width()*b.height())));
+  profile("A3 full-resolution refinement");
   result.diagnostics.componentsFinite =
       std::isfinite(result.diagnostics.meanEffectiveComponents);
   result.diagnostics.appearanceFinite =
@@ -1264,6 +1291,21 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
     state->fullLatent=std::make_unique<LatentComponentSet>(result.latent);
   }
   return result;
+}
+
+void updatePhase4PlateSupports(Phase4AutomaticResult& result,const Phase4Params& params,bool updateY,bool updateAB,const ExecutionContext& execution){
+  AnalysisImage analysis;analysis.width=result.analysisGraph.width;analysis.height=result.analysisGraph.height;
+  const auto b=result.plates.bounds();
+  const float sourcePerAnalysis=std::max(float(b.width())/analysis.width,float(b.height())/analysis.height);
+  execution.parallelRows(0,result.plates.count(),[&](int first,int last){for(int i=first;i<last;++i){
+    std::vector<float> y,ab;
+    if(updateY)y=maxProductSupport(result.analysisGraph,result.analysisPlateAlpha[i].data(),phase4SupportRadiusY(params)/sourcePerAnalysis,params.structureRespect);
+    if(updateAB)ab=maxProductSupport(result.analysisGraph,result.analysisPlateAlpha[i].data(),phase4SupportRadiusAB(params)/sourcePerAnalysis,params.structureRespect);
+    for(int yy=b.y1;yy<b.y2;++yy)for(int xx=b.x1;xx<b.x2;++xx){float ax=(float(xx-b.x1)+.5f)*analysis.width/b.width()-.5f,ay=(float(yy-b.y1)+.5f)*analysis.height/b.height()-.5f;
+      if(updateY)result.plates.supportY(i).at(xx,yy)=sampleField(y,analysis,ax,ay);
+      if(updateAB)result.plates.supportAB(i).at(xx,yy)=sampleField(ab,analysis,ax,ay);
+    }
+  }});
 }
 
 } // namespace pigment

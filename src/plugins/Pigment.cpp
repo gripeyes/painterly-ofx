@@ -3,6 +3,7 @@
 #include "core/IntegratedPigment.h"
 #include "core/PigmentPhase33.h"
 #include "core/PigmentPhase4.h"
+#include "core/Phase4Interactive.h"
 #include "core/PigmentControls.h"
 #include "ofx/OfxImageHelpers.h"
 #include "ofx/ParameterHelpers.h"
@@ -83,8 +84,15 @@ constexpr const char* kComputeBackend = "phase33ComputeBackend";
 constexpr const char* kPhase4PlateCount = "phase4PlateCount";
 constexpr const char* kPigmentInterface = "pigmentInterface";
 constexpr const char* kPigmentCopy = "pigmentCopyToResearch";
+constexpr const char* kPlateEditor = "pigmentPlate";
+constexpr const char* kPlateEditorEnable = "pigmentPlateEnable";
+constexpr std::array<const char*,6> kPlateEditorValues{"pigmentPlateWeight","pigmentPlateTone","pigmentPlateChromaA","pigmentPlateChromaB","pigmentPlateSpillOut","pigmentPlateReceive"};
 constexpr const char* kColorInteraction = "phase4ColorInteraction";
 constexpr const char* kPhase4Backend = "phase4ComputeBackend";
+constexpr const char* kExecutionClass = "phase4ExecutionClass";
+constexpr const char* kInteractiveSize = "phase4InteractiveSize";
+constexpr const char* kPreviewQuality = "phase4PreviewQuality";
+constexpr const char* kReferenceWarning = "phase4ReferenceWarning";
 constexpr const char* kPigmentDensity = "phase4PigmentDensity";
 constexpr const char* kIndependentComplexity = "phase4IndependentComplexity";
 constexpr const char* kYComplexity = "phase4YComplexity";
@@ -196,6 +204,8 @@ class PigmentEffect final : public OFX::ImageEffect {
     pigmentCopy_=fetchPushButtonParam(kPigmentCopy);
     colorInteraction_=fetchChoiceParam(kColorInteraction);pigmentDensity_=fetchDoubleParam(kPigmentDensity);
     phase4Backend_=fetchChoiceParam(kPhase4Backend);
+    executionClass_=fetchChoiceParam(kExecutionClass);interactiveSize_=fetchIntParam(kInteractiveSize);
+    previewQuality_=fetchChoiceParam(kPreviewQuality);referenceWarning_=fetchStringParam(kReferenceWarning);
     independentComplexity_=fetchBooleanParam(kIndependentComplexity);
     yComplexity_=fetchDoubleParam(kYComplexity);abComplexity_=fetchDoubleParam(kABComplexity);
     for(int i=0;i<10;++i)artistParams_[i]=fetchDoubleParam(kArtistParams[i]);
@@ -217,6 +227,8 @@ class PigmentEffect final : public OFX::ImageEffect {
     FETCH_PHASE4(phase4StructureRespect_, kPhase4StructureRespect);
 #undef FETCH_PHASE4
     for(int i=0;i<8;++i){phase4PlateEnable_[i]=fetchBooleanParam(kPhase4PlateEnable[i]);phase4PlateWeight_[i]=fetchDoubleParam(kPhase4PlateWeight[i]);phase4PlateTone_[i]=fetchDoubleParam(kPhase4PlateTone[i]);phase4PlateBiasA_[i]=fetchDoubleParam(kPhase4PlateBiasA[i]);phase4PlateBiasB_[i]=fetchDoubleParam(kPhase4PlateBiasB[i]);phase4PlateSpillOut_[i]=fetchDoubleParam(kPhase4PlateSpillOut[i]);phase4PlateReceive_[i]=fetchDoubleParam(kPhase4PlateReceive[i]);}
+    plateEditor_=fetchChoiceParam(kPlateEditor);plateEditorEnable_=fetchBooleanParam(kPlateEditorEnable);
+    for(int i=0;i<6;++i)plateEditorValues_[i]=fetchDoubleParam(kPlateEditorValues[i]);
     for (int i = 0; i < 4; ++i) {
       planeEnable_[i] = fetchBooleanParam(kPlaneEnable[i]);
       planeAmount_[i] = fetchDoubleParam(kPlaneAmount[i]);
@@ -245,6 +257,12 @@ class PigmentEffect final : public OFX::ImageEffect {
  private:
   IntegratedPigmentParams parameters(double time) const;
   void updateInterface(double time);
+  void refreshPlateEditor(double time);
+  OFX::ChoiceParam* plateEditor_=nullptr;
+  OFX::BooleanParam* plateEditorEnable_=nullptr;
+  std::array<OFX::DoubleParam*,6> plateEditorValues_{};
+  bool refreshingPlateEditor_=false;
+  int plateEditorCount_=0;
   OFX::ChoiceParam* pigmentInterface_=nullptr;
   OFX::PushButtonParam* pigmentCopy_=nullptr;
   OFX::ChoiceParam* colorInteraction_=nullptr;
@@ -284,6 +302,11 @@ class PigmentEffect final : public OFX::ImageEffect {
   OFX::ChoiceParam* phase4Representation_ = nullptr;
   OFX::DoubleParam *phase4YSupport_ = nullptr, *phase4ABSupport_ = nullptr;
   Phase4ResearchCache phase4Cache_;
+  Phase4InteractiveCache interactiveCache_;
+  OFX::ChoiceParam* executionClass_=nullptr;
+  OFX::IntParam* interactiveSize_=nullptr;
+  OFX::ChoiceParam* previewQuality_=nullptr;
+  OFX::StringParam* referenceWarning_=nullptr;
   std::mutex phase4Mutex_;
   OFX::BooleanParam* invertMask_ = nullptr;
   OFX::ChoiceParam *gamut_ = nullptr, *comparison_ = nullptr, *debug_ = nullptr,
@@ -429,13 +452,60 @@ void PigmentEffect::updateInterface(double time){
   comparison_->setIsSecret(mode!=0);comparison_->setEnabled(mode==0);
   for(auto* p:{regionSoftness_,modeSelectivity_,boundaryScale_,veilTonalBias_,chromaLumaCoupling_})p->setIsSecret(mode!=0);
   debugPlane_->setIsSecret(mode!=0);
+  // Nuke does not consistently propagate OFX group secrecy to its children.
+  // Set leaf visibility explicitly rather than trusting collapsed/hidden groups.
+  for(auto* p:{massScale_,massStrength_,toneSimilarity_,chromaSimilarity_,lumaAttraction_,chromaAttraction_,structureScale_,structurePreserve_,boundaryPreserve_,boundaryExtinction_,boundarySoftness_,veilAmount_,veilScale_,veilIrregularity_,veilContrast_,detailCleanup_,fineDetail_,mediumDetail_,internalVariation_,chromaMigration_,chromaScale_,chromaEdgeRespect_,fineExtinction_,mediumExtinction_,broadRetention_,detailStructurePreserve_,yTransitionWidth_,abTransitionWidth_,transitionStructureRespect_,localSoftness_,automaticOccupancy_,automaticPlaneStrength_,spatialCoherence_,colorCoherence_,hybridGuidance_,smoothSimplification_,shadingStructurePreserve_,chromaShadingRetention_,phase33StructurePreserve_})p->setIsSecret(mode!=0);
+  for(OFX::Param* p:std::initializer_list<OFX::Param*>{veilSeed_,planeSource_,shadingModel_,transitionSolver_,computeBackend_})p->setIsSecret(mode!=0);
+  for(int i=0;i<4;++i){planeEnable_[i]->setIsSecret(mode!=0);planeManualTarget_[i]->setIsSecret(mode!=0);for(auto* p:{planeAmount_[i],planeSourceMix_[i],planeYOffset_[i],planeToneInfluence_[i],planeABias_[i],planeBBias_[i],planeChromaInfluence_[i]})p->setIsSecret(mode!=0);}
+  const bool research=mode==2 || (mode==0 && comparison==6);
+  auto visible=[](OFX::Param* p,bool show){p->setIsSecret(!show);};
+  for(const char* name:{"phase4AutoGroup","phase4ChunkGroup","phase4SpillGroup","phase4ResearchGroup"})visible(fetchGroupParam(name),research);
+  for(auto* p:{phase4YSupport_,phase4ABSupport_,phase4PlateScale_,phase4PlateOverlap_,phase4ChromaSupportRatio_,phase4BoundaryLock_,phase4Coupling_,phase4LumaChunkScale_,phase4ChromaChunkScale_,phase4MergeSelectivity_,phase4InternalVariation_,phase4GradientComplexity_,phase4SpillAmount_,phase4SpillReach_,phase4SpillAsymmetry_,phase4ChromaSpill_,phase4LumaSpill_,phase4StructureRespect_,yComplexity_,abComplexity_})visible(p,research);
+  for(OFX::Param* p:std::initializer_list<OFX::Param*>{phase4Representation_,phase4PlateCount_,phase4LatentCount_,phase4DebugLatent_,phase4DebugPlate_,independentComplexity_})visible(p,research);
+  for(int i=0;i<8;++i){std::string name="phase4Plate";name+=char('A'+i);name+="Group";fetchGroupParam(name)->setIsSecret(true);phase4PlateEnable_[i]->setIsSecret(true);for(auto* p:{phase4PlateWeight_[i],phase4PlateTone_[i],phase4PlateBiasA_[i],phase4PlateBiasB_[i],phase4PlateSpillOut_[i],phase4PlateReceive_[i]})p->setIsSecret(true);}
+  fetchGroupParam("plateEditorGroup")->setIsSecret(mode==0 && comparison!=6);
+  plateEditor_->setIsSecret(mode==0 && comparison!=6);plateEditorEnable_->setIsSecret(mode==0 && comparison!=6);
+  for(auto* p:plateEditorValues_)p->setIsSecret(mode==0 && comparison!=6);
+  colorInteraction_->setIsSecret(mode==0 && comparison!=6);pigmentDensity_->setIsSecret(mode==0 && comparison!=6);phase4Backend_->setIsSecret(mode==0 && comparison!=6);
+  executionClass_->setIsSecret(mode==0 && comparison!=6);interactiveSize_->setIsSecret(true);
+  previewQuality_->setIsSecret(mode==0 && comparison!=6);
+  referenceWarning_->setIsSecret(mode==0 && comparison!=6);
+  int execution=1;executionClass_->getValue(execution);previewQuality_->setEnabled(execution==1);
+  visible(debug_,mode!=1);
+  refreshPlateEditor(time);
   int representation=0;phase4Representation_->getValueAtTime(time,representation);
   bool independent=independentComplexity_->getValueAtTime(time),field=representation==0 || representation==4;
   yComplexity_->setEnabled(mode!=1 && independent && field);abComplexity_->setEnabled(mode!=1 && independent && field);
   phase4GradientComplexity_->setEnabled(mode!=1 && !independent && field);
 }
 
+void PigmentEffect::refreshPlateEditor(double time){
+  if(refreshingPlateEditor_)return;
+  refreshingPlateEditor_=true;
+  try{
+    const int count=std::clamp(phase4PlateCount_->getValueAtTime(time),4,8);
+    int selected=0;plateEditor_->getValue(selected);
+    if(plateEditorCount_!=count){plateEditor_->resetOptions();plateEditor_->appendOption("All");for(int i=0;i<count;++i)plateEditor_->appendOption(std::string(1,char('A'+i)));plateEditorCount_=count;}
+    selected=std::clamp(selected,0,count);plateEditor_->setValue(selected);
+    std::array<std::array<OFX::DoubleParam*,8>*,6> fields{&phase4PlateWeight_,&phase4PlateTone_,&phase4PlateBiasA_,&phase4PlateBiasB_,&phase4PlateSpillOut_,&phase4PlateReceive_};
+    bool enabled=true;for(int i=selected?selected-1:0;i<(selected?selected:count);++i)enabled=enabled && phase4PlateEnable_[i]->getValueAtTime(time);
+    plateEditorEnable_->setValue(enabled);
+    for(int f=0;f<6;++f){double value=0;for(int i=selected?selected-1:0;i<(selected?selected:count);++i)value+=(*fields[f])[i]->getValueAtTime(time);plateEditorValues_[f]->setValue(value/(selected?1:count));}
+  }catch(...){refreshingPlateEditor_=false;throw;}
+  refreshingPlateEditor_=false;
+}
+
 void PigmentEffect::changedParam(const OFX::InstanceChangedArgs& args,const std::string& name){
+  if(std::getenv("PIGMENT_PHASE4_PROFILE") && name.rfind("pigmentPlate",0)==0)std::fprintf(stderr,"[phase4-ui] changed %s refreshing=%d\n",name.c_str(),int(refreshingPlateEditor_));
+  if(refreshingPlateEditor_)return;
+  if(name==kPlateEditor){refreshPlateEditor(args.time);return;}
+  if(name==kPlateEditorEnable || std::find(kPlateEditorValues.begin(),kPlateEditorValues.end(),name)!=kPlateEditorValues.end()){
+    const int count=std::clamp(phase4PlateCount_->getValueAtTime(args.time),4,8);int selected=0;plateEditor_->getValue(selected);selected=std::clamp(selected,0,count);
+    std::array<std::array<OFX::DoubleParam*,8>*,6> fields{&phase4PlateWeight_,&phase4PlateTone_,&phase4PlateBiasA_,&phase4PlateBiasB_,&phase4PlateSpillOut_,&phase4PlateReceive_};
+    beginEditBlock("Edit selected Pigment plate");refreshingPlateEditor_=true;
+    try{for(int i=selected?selected-1:0;i<(selected?selected:count);++i){if(name==kPlateEditorEnable)phase4PlateEnable_[i]->setValueAtTime(args.time,plateEditorEnable_->getValue());else for(int f=0;f<6;++f)if(name==kPlateEditorValues[f])(*fields[f])[i]->setValueAtTime(args.time,plateEditorValues_[f]->getValue());}endEditBlock();}catch(...){refreshingPlateEditor_=false;endEditBlock();throw;}
+    refreshingPlateEditor_=false;return;
+  }
   if(name==kPigmentCopy){
     int mode=0;pigmentInterface_->getValueAtTime(args.time,mode);if(mode!=1)return;
     const auto p=parameters(args.time).phase4;
@@ -453,7 +523,7 @@ void PigmentEffect::changedParam(const OFX::InstanceChangedArgs& args,const std:
       endEditBlock();
     }catch(...){endEditBlock();throw;}
   }
-  if(name==kPigmentInterface || name==kComparison || name==kPigmentCopy || name==kIndependentComplexity || name==kPhase4Representation || name==kColorInteraction)updateInterface(args.time);
+  if(name==kPigmentInterface || name==kComparison || name==kPigmentCopy || name==kIndependentComplexity || name==kPhase4Representation || name==kColorInteraction || name==kPhase4PlateCount || name==kExecutionClass)updateInterface(args.time);
 }
 
 bool PigmentEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& clip,
@@ -536,10 +606,11 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
         ofx::toRect(maskImage->getBounds()), maskImage->getPixelComponentCount()};
     Phase4RenderInputs cpu{sourceView, destinationView, ofx::toRect(args.renderWindow), p,
         {source->getPixelAspectRatio(), args.renderScale.x, args.renderScale.y},
-        maskImage ? &maskView : nullptr, &phase4Cache_, {}, {}};
+        maskImage ? &maskView : nullptr, &phase4Cache_, 0, {}, {}};
     std::lock_guard<std::mutex> phase4Lock(phase4Mutex_);
 #ifdef PIGMENT_ENABLE_METAL
     int backend=0;phase4Backend_->getValueAtTime(args.time,backend);
+    cpu.backendIdentity=backend;
     if(backend!=1 && p.phase4.colorInteraction!=ColorInteractionLaw::SpectralPigment){
       if(!metal_)metal_=std::make_unique<metal::MetalInstance>();
       if(backend==2)cpu.accelerateTransport=[this,backend](const PublicPlateSet& plates,const SparseAffinityGraph& graph,const Phase4Params& params,Phase4SpillTransport& result){
@@ -555,11 +626,15 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
       };
     }
 #endif
-    const auto diagnostics = processPigmentPhase4(
-        cpu, {[this] { return abort(); }, boundedParallelRows, nullptr});
+    int executionClass=0;executionClass_->getValueAtTime(args.time,executionClass);
+    int quality=1;previewQuality_->getValueAtTime(args.time,quality);
+    const auto execution=ExecutionContext{[this] { return abort(); }, boundedParallelRows, nullptr};
+    const auto diagnostics = executionClass==1?processPhase4Interactive(cpu,interactiveCache_,phase4PreviewAnalysisSize(quality),execution):processPigmentPhase4(cpu,execution);
+    const auto& activeCache=executionClass==1?interactiveCache_.stages:phase4Cache_;
     if(std::getenv("PIGMENT_PHASE4_PROFILE"))std::fprintf(stderr,
-      "PHASE4_PROFILE frame=%.3f size=%dx%d origin=%d,%d analysis=%.3f hierarchy=%.3f field=%.3f transport=%.3f interaction=%.3f final=%.3f total=%.3f metal=%d builds=%zu/%zu/%zu/%zu source_builds=%zu\n",
-      args.time,sourceBounds.width(),sourceBounds.height(),sourceBounds.x1,sourceBounds.y1,diagnostics.analysisMs,diagnostics.hierarchyMs,diagnostics.synthesisMs,diagnostics.transportMs,diagnostics.interactionMs,diagnostics.finalMs,diagnostics.totalMs,int(diagnostics.metalSpill),phase4Cache_.automaticBuilds,phase4Cache_.hierarchyBuilds,phase4Cache_.synthesisBuilds,phase4Cache_.transportBuilds,phase4Cache_.sourceAnalysis.builds);
+      "PHASE4_PROFILE frame=%.3f size=%dx%d origin=%d,%d analysis=%.3f hierarchy=%.3f field=%.3f transport=%.3f interaction=%.3f final=%.3f total=%.3f metal=%d builds=%zu/%zu/%zu/%zu source_builds=%zu cuts=%zu interactions=%zu supports=%zu/%zu fields=%zu/%zu\n",
+      args.time,sourceBounds.width(),sourceBounds.height(),sourceBounds.x1,sourceBounds.y1,diagnostics.analysisMs,diagnostics.hierarchyMs,diagnostics.synthesisMs,diagnostics.transportMs,diagnostics.interactionMs,diagnostics.finalMs,diagnostics.totalMs,int(diagnostics.metalSpill),activeCache.automaticBuilds,activeCache.hierarchyBuilds,activeCache.synthesisBuilds,activeCache.transportBuilds,activeCache.sourceAnalysis.builds,activeCache.hierarchyCuts,activeCache.interactionBuilds,activeCache.supportBuildsY,activeCache.supportBuildsAB,activeCache.fieldBuildsY,activeCache.fieldBuildsAB);
+    if(std::getenv("PIGMENT_PHASE4_PROFILE"))std::fprintf(stderr,"PHASE4_EXECUTION class=%s guidance_builds=%zu analysis_long=%d\n",executionClass==1?"Interactive/Guided":"Reference/Full",interactiveCache_.guidanceBuilds,executionClass==1?interactiveCache_.analysisBounds.width():sourceBounds.width());
     if(!diagnostics.reconstructionConverged) {
       setPersistentMessage(OFX::Message::eMessageError,"PigmentPhase4Poisson",
                            "Phase 4 bounded reconstruction did not converge to the required tolerance.");
@@ -644,7 +719,7 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
 }
 
 void PigmentEffect::purgeCaches() {
-  {std::lock_guard<std::mutex> lock(phase4Mutex_);phase4Cache_=Phase4ResearchCache{};}
+  {std::lock_guard<std::mutex> lock(phase4Mutex_);phase4Cache_=Phase4ResearchCache{};interactiveCache_=Phase4InteractiveCache{};}
 #ifdef PIGMENT_ENABLE_METAL
   if (metal_) metal_->releaseTransientResources();
 #endif
@@ -709,9 +784,9 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   auto* output = d.defineClip(kOfxImageEffectOutputClipName); addComponents(output);
 
   auto* interface=d.defineChoiceParam(kPigmentInterface);interface->setLabels("Interface","Interface","Interface");interface->setScriptName(kPigmentInterface);
-  interface->appendOption("Existing Comparisons");interface->appendOption("Pigment");interface->appendOption("Research / Compare");interface->setDefault(0);interface->setAnimates(false);
-  interface->setHint("Pigment is an opt-in image-making macro layer over Phase 4 C1. Research exposes C0-C4 and stage diagnostics. Existing Comparisons preserves saved nodes and defaults.");
-  auto* artist=group(d,"pigmentArtistGroup","Pigment",true);artist->setIsSecret(true);
+  interface->appendOption("Legacy Comparisons");interface->appendOption("Pigment");interface->appendOption("Research");interface->setDefault(1);interface->setAnimates(false);
+  interface->setHint("Pigment is the normal artist interface. Research exposes C0-C4 and diagnostics. Legacy Comparisons retains historical algorithms without changing saved choice indices.");
+  auto* artist=group(d,"pigmentArtistGroup","Pigment",true);
   constexpr std::array<const char*,10> artistLabels{"Pictorial Scale","Structure Lock","Luma Organization","Chroma Organization","Luma Complexity","Chroma Complexity","Chroma Spread","Spill","Spill Reach","Spill Directionality / Asymmetry"};
   constexpr std::array<double,10> artistDefaults{48,.75,.5,2./3.,.5,.25,1./3.,.25,48,.5};
   constexpr std::array<const char*,10> artistHints{
@@ -725,9 +800,14 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
     "Overall directed plate interaction, conservative Y and organization/spread-dependent AB; zero bypasses all Spill",
     "Canonical-pixel e-fold graph travel distance, independent of amplitude; zero keeps intrinsic support exactly",
     "Zero symmetrizes interaction; one retains directed donor/receiver transport"};
-  for(int i=0;i<10;++i){bool physical=i==0 || i==8;auto* parameter=number(d,*artist,kArtistParams[i],artistLabels[i],artistDefaults[i],i==0?4:0,physical?256:1,physical?128:1,artistHints[i],physical?OFX::eDoubleTypePlain:OFX::eDoubleTypeScale);parameter->setIsSecret(true);}
-  auto* copy=d.definePushButtonParam(kPigmentCopy);copy->setLabels("Copy to Research","Copy to Research","Copy to Research");copy->setScriptName(kPigmentCopy);copy->setParent(*artist);copy->setIsSecret(true);copy->setHint("Copy this frame's evaluated Pigment mapping into Research controls and switch interfaces without changing the image. Existing research values are replaced only by this explicit action.");
-  auto* interaction=group(d,"colorInteractionGroup","Color Interaction — Experimental",false);interaction->setIsSecret(true);
+  for(int i=0;i<10;++i){bool physical=i==0 || i==8;number(d,*artist,kArtistParams[i],artistLabels[i],artistDefaults[i],i==0?4:0,physical?256:1,physical?128:1,artistHints[i],physical?OFX::eDoubleTypePlain:OFX::eDoubleTypeScale);}
+  auto* copy=d.definePushButtonParam(kPigmentCopy);copy->setLabels("Copy to Research","Copy to Research","Copy to Research");copy->setScriptName(kPigmentCopy);copy->setParent(*artist);copy->setHint("Copy this frame's evaluated Pigment mapping into Research controls and switch interfaces without changing the image. Existing research values are replaced only by this explicit action.");
+  auto* interaction=group(d,"colorInteractionGroup","Color / Compute",true);
+  auto* executionClass=d.defineChoiceParam(kExecutionClass);executionClass->setLabels("Execution Class","Execution Class","Execution Class");executionClass->appendOption("Full Reference (expensive)");executionClass->appendOption("Interactive / Guided");executionClass->setDefault(1);executionClass->setAnimates(false);executionClass->setParent(*interaction);executionClass->setHint("Guided is the normal artist workflow: controlled reduced analysis, full-resolution source-guided effect-difference reconstruction. Full Reference preserves the exact formulation and may take minutes at full-HD; use for validation/final comparison, not interactive adjustment.");
+  auto* interactiveSize=d.defineIntParam(kInteractiveSize);interactiveSize->setLabels("Interactive Analysis Size","Interactive Analysis Size","Interactive Analysis Size");interactiveSize->setDefault(128);interactiveSize->setRange(64,512);interactiveSize->setDisplayRange(64,512);interactiveSize->setAnimates(false);interactiveSize->setParent(*interaction);interactiveSize->setHint("Explicit analysis long-edge budget, active only in Interactive / Guided. Eigen/component counts and reference iterations are unchanged.");
+  interactiveSize->setIsSecret(true);
+  auto* quality=d.defineChoiceParam(kPreviewQuality);quality->setLabels("Preview Quality","Preview Quality","Preview Quality");quality->appendOption("Fast");quality->appendOption("Balanced");quality->appendOption("Detailed (Research)");quality->setDefault(1);quality->setAnimates(false);quality->setParent(*interaction);quality->setHint("Guided analysis fidelity, not output resolution. Fast/Balanced/Detailed retain the same eigen/component budgets on progressively finer analysis grids. Full-resolution structure and output size are preserved. Detailed is experimental: finer analysis is not monotonically closer to Reference and can introduce field artifacts. Balanced is the validated hands-on default. Compare Full Reference for final judgment.");
+  auto* warning=d.defineStringParam(kReferenceWarning);warning->setLabels("Reference Warning","Reference Warning","Reference Warning");warning->setStringType(OFX::eStringTypeLabel);warning->setDefault("Full Reference may take minutes at full-HD. Validation/final comparison only.");warning->setAnimates(false);warning->setParent(*interaction);
   auto* law=d.defineChoiceParam(kColorInteraction);law->setLabels("Color Interaction","Color Interaction","Color Interaction");law->setScriptName(kColorInteraction);law->setParent(*interaction);
   law->appendOption("Linear YAB");law->appendOption("Density");law->appendOption("Spectral Pigment");law->setDefault(0);
   law->setHint("CPU appearance laws on identical directed Spill weights. Spectral uses compact representative reflectance and equal-scattering K–M, not measured pigments. No spatial or display transform.");
@@ -735,6 +815,12 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   auto* phase4Backend=d.defineChoiceParam(kPhase4Backend);phase4Backend->setLabels("Compute Backend","Compute Backend","Compute Backend");phase4Backend->setScriptName(kPhase4Backend);phase4Backend->setParent(*interaction);
   phase4Backend->appendOption("Auto (Hybrid)");phase4Backend->appendOption("CPU Reference");phase4Backend->appendOption("Metal Spill (Hybrid)");phase4Backend->setDefault(0);
   phase4Backend->setHint("Hybrid accelerates Linear/Density appearance interaction and alpha reconstruction. Frozen analysis/hierarchy/fields stay CPU. Auto keeps faster cached CPU graph transport; explicit Metal also runs the exact GPU graph solver. Spectral always runs CPU. Auto falls back on failure; explicit Metal reports failure.");
+  auto* editor=group(d,"plateEditorGroup","Plate Editor",true);
+  auto* selected=d.defineChoiceParam(kPlateEditor);selected->setLabels("Plate","Plate","Plate");selected->setScriptName(kPlateEditor);selected->setParent(*editor);selected->appendOption("All");for(int i=0;i<6;++i)selected->appendOption(std::string(1,char('A'+i)));selected->setDefault(0);selected->setAnimates(false);
+  selected->setHint("Edits the existing per-plate state at the current frame. All shows the average; editing a property sets that property on all active plates. Other properties and inactive plates are untouched. Hidden phase4PlateA...H parameters retain animation and serialization.");
+  auto* enabled=ofx::defineBoolean(d,kPlateEditorEnable,"Enable",true,"Enable selected plate(s); writes the underlying animated parameter at this frame");enabled->setParent(*editor);enabled->setAnimates(false);
+  constexpr std::array<const char*,6> editLabels{"Weight","Tone","Chroma A","Chroma B","Spill Out","Receive Spill"};
+  for(int i=0;i<6;++i){auto* p=number(d,*editor,kPlateEditorValues[i],editLabels[i],i==0 || i>=4?1:0,i==0 || i>=4?0:(i==1?-16:-4),i>=4?1:(i==1?16:4),i>=4?1:2,"Current-frame editor for selected underlying plate state");p->setAnimates(false);}
 
   auto* painterly = group(d, "painterlyGroup", "Painterly");
   auto* amount=number(d, *painterly, kAmount, "Amount", 0.7, 0, 1, 1, "Overall integrated processing strength", OFX::eDoubleTypeScale);
@@ -878,18 +964,20 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   backend->appendOption("Metal"); backend->appendOption("CPU Reference");
   backend->setDefault(0); backend->setParent(*solver);
 
-  auto* phase4 = group(d, "phase4Group", "Research / Compare — Phase 4", false);
+  auto* phase4 = group(d, "phase4Group", "Research / Compare — Phase 4", true);
   auto* representation=d.defineChoiceParam(kPhase4Representation);representation->setLabels("Research Representation","Research Representation","Research Representation");representation->setScriptName(kPhase4Representation);representation->appendOption("C1 Bounded Poisson");representation->appendOption("C0 A3 Passthrough");representation->appendOption("C3 Regional Eigen (Y2 / AB1)");representation->appendOption("C4 Sparse Curve / Field");representation->appendOption("C2 Preserved Second Moments");representation->setDefault(0);representation->setParent(*phase4);representation->setHint("Named CPU comparison baselines, not photographic acceptance. C2 is the preserved fixed moment experiment, not an acceleration target.");
   number(d,*phase4,kPhase4YSupport,"Y Support Strength",1,0,2,2,"Intrinsic support participation amplitude; does not expand alpha or change spectral extraction");
   number(d,*phase4,kPhase4ABSupport,"AB Support Strength",1,0,2,2,"Intrinsic AB support participation amplitude; Plate Scale/Overlap and Chroma Support Ratio control graph extent");
-  auto* phase4Auto = group(d, "phase4AutoGroup", "Auto Plates", true); phase4Auto->setParent(*phase4);
+  // Keep dynamically switched research sections at one nesting level. Nuke's
+  // OFX adapter loses child labels/choices when a secret parent is restored.
+  auto* phase4Auto = group(d, "phase4AutoGroup", "Auto Plates", true);
   auto* plateCount = d.defineIntParam(kPhase4PlateCount); plateCount->setLabels("Plate Count","Plate Count","Plate Count"); plateCount->setDefault(6); plateCount->setRange(4,8); plateCount->setDisplayRange(4,8); plateCount->setParent(*phase4Auto);
   number(d,*phase4Auto,kPhase4PlateScale,"Plate Scale",48,4,256,128,"Graph-geodesic component adjacency scale; never a blur radius");
   number(d,*phase4Auto,kPhase4PlateOverlap,"Plate Overlap",.55,0,1,1,"Latent grouping entropy and graph-support budget",OFX::eDoubleTypeScale);
   number(d,*phase4Auto,kPhase4ChromaSupportRatio,"Chroma Support Ratio",2,.25,4,3,"AB graph-support reach relative to Y; independent of Chunk Scale",OFX::eDoubleTypeScale);
   number(d,*phase4Auto,kPhase4BoundaryLock,"Boundary Lock",.75,0,1,1,"Raises persistent-boundary disappearance levels",OFX::eDoubleTypeScale);
   number(d,*phase4Auto,kPhase4Coupling,"Luma/Chroma Coupling",.35,0,1,1,"Equalizes AB organization toward Y",OFX::eDoubleTypeScale);
-  auto* phase4Chunk=group(d,"phase4ChunkGroup","Chunk Formation",false);phase4Chunk->setParent(*phase4);
+  auto* phase4Chunk=group(d,"phase4ChunkGroup","Chunk Formation",true);
   number(d,*phase4Chunk,kPhase4LumaChunkScale,"Luma Chunk Scale",24,0,256,128,"Y hierarchy cut in canonical pixels; zero bypasses synthesis");
   number(d,*phase4Chunk,kPhase4ChromaChunkScale,"Chroma Chunk Scale",64,0,512,256,"AB hierarchy cut in canonical pixels; zero bypasses synthesis");
   number(d,*phase4Chunk,kPhase4MergeSelectivity,"Merge Selectivity",.6,0,1,1,"Sensitivity to appearance and gradient disagreement",OFX::eDoubleTypeScale);
@@ -898,7 +986,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   auto* independent=ofx::defineBoolean(d,kIndependentComplexity,"Independent Y/AB Complexity",false,"Enable separate C1/C2 field complexities; off preserves historical shared Gradient Complexity");independent->setAnimates(false);independent->setParent(*phase4Chunk);
   number(d,*phase4Chunk,kYComplexity,"Y Field Complexity",.35,0,1,1,"Independent Y source-gradient survival in C1/C2",OFX::eDoubleTypeScale);
   number(d,*phase4Chunk,kABComplexity,"AB Field Complexity",.35,0,1,1,"Independent AB source-gradient survival in C1/C2",OFX::eDoubleTypeScale);
-  auto* phase4Spill=group(d,"phase4SpillGroup","Plate Interaction",false);phase4Spill->setParent(*phase4);
+  auto* phase4Spill=group(d,"phase4SpillGroup","Plate Interaction",true);
   number(d,*phase4Spill,kPhase4SpillAmount,"Spill Amount",.25,0,1,1,"Directed graph-based plate interaction",OFX::eDoubleTypeScale);
   number(d,*phase4Spill,kPhase4SpillReach,"Spill Reach",48,0,256,128,"E-fold directed graph-distance attenuation scale, independent of seed amplitude; zero keeps intrinsic support exactly");
   number(d,*phase4Spill,kPhase4SpillAsymmetry,"Spill Asymmetry",.5,0,1,1,"Blend from symmetric to directed information flow",OFX::eDoubleTypeScale);
@@ -907,12 +995,12 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   number(d,*phase4Spill,kPhase4StructureRespect,"Structure Respect",.8,0,1,1,"Retained-boundary capacity in support and spill graphs",OFX::eDoubleTypeScale);
   constexpr std::array<const char*,8> phase4Labels{"Plate A","Plate B","Plate C","Plate D","Plate E","Plate F","Plate G","Plate H"};
   for(int i=0;i<8;++i){std::string name="phase4Plate";name+=char('A'+i);name+="Group";auto*pg=group(d,name.c_str(),phase4Labels[i],false);pg->setParent(*phase4);auto*enabled=ofx::defineBoolean(d,kPhase4PlateEnable[i],"Enable",true,"Enable reconstruction and interaction for this plate");enabled->setParent(*pg);number(d,*pg,kPhase4PlateWeight[i],"Weight",1,0,4,2,"Final reconstruction ownership only");number(d,*pg,kPhase4PlateTone[i],"Tone",0,-16,16,2,"Additive unclipped Y adjustment after chunk synthesis");number(d,*pg,kPhase4PlateBiasA[i],"Chroma A",0,-4,4,1,"Additive opponent A adjustment after chunk synthesis");number(d,*pg,kPhase4PlateBiasB[i],"Chroma B",0,-4,4,1,"Additive opponent B adjustment after chunk synthesis");number(d,*pg,kPhase4PlateSpillOut[i],"Spill Out",1,0,1,1,"Directed donor strength",OFX::eDoubleTypeScale);number(d,*pg,kPhase4PlateReceive[i],"Receive Spill",1,0,1,1,"Directed receiver strength",OFX::eDoubleTypeScale);}
-  auto* phase4Research=group(d,"phase4ResearchGroup","Phase 4 Research Advanced",false);phase4Research->setParent(*phase4);
+  auto* phase4Research=group(d,"phase4ResearchGroup","Phase 4 Research Advanced",true);
   auto* latentCount=d.defineIntParam(kPhase4LatentCount);latentCount->setLabels("Latent Components","Latent Components","Latent Components");latentCount->setDefault(16);latentCount->setRange(12,24);latentCount->setDisplayRange(12,24);latentCount->setParent(*phase4Research);
   auto* debugLatent=d.defineIntParam(kPhase4DebugLatent);debugLatent->setLabels("Debug Latent","Debug Latent","Debug Latent");debugLatent->setDefault(1);debugLatent->setRange(1,24);debugLatent->setDisplayRange(1,24);debugLatent->setParent(*phase4Research);
   auto* debugPlate=d.defineIntParam(kPhase4DebugPlate);debugPlate->setLabels("Debug Plate","Debug Plate","Debug Plate");debugPlate->setDefault(0);debugPlate->setRange(0,7);debugPlate->setDisplayRange(0,7);debugPlate->setParent(*phase4Research);
 
-  auto* advanced = group(d, "advancedGroup", "Research Advanced", false);
+  auto* advanced = group(d, "advancedGroup", "Research Advanced", true);
   number(d, *advanced, kRegionSoftness, "Region Softness", 0.5, 0.1, 4, 2, "Tail softness of joint spatial/color attraction");
   number(d, *advanced, kModeSelectivity, "Mode Selectivity", 0.65, 0, 1, 1,
          "Low softly mixes candidate populations; high favors the dominant coherent mode",

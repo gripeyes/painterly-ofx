@@ -16,6 +16,12 @@ namespace pigment {
 struct Phase4ResearchCache {
   Phase4AnalysisCache sourceAnalysis;
   std::vector<double> automaticKey, hierarchyKey, synthesisKey;
+  std::vector<double> hierarchyCutKey;
+  std::vector<double> fieldKeyY,fieldKeyAB;
+  size_t fieldBuildsY=0,fieldBuildsAB=0;
+  size_t hierarchyCuts=0;
+  std::vector<double> supportKeyY,supportKeyAB;
+  size_t supportBuildsY=0,supportBuildsAB=0;
   std::unique_ptr<Phase4AutomaticResult> automatic;
   std::unique_ptr<PublicPlateSet> supported;
   std::unique_ptr<Phase4RegionHierarchy> hierarchy;
@@ -24,6 +30,10 @@ struct Phase4ResearchCache {
   std::vector<double> transportKey;
   std::unique_ptr<Phase4SpillTransport> transport;
   size_t transportBuilds=0;
+  std::vector<double> interactionKey;
+  std::unique_ptr<Phase4SpillResult> interaction;
+  size_t interactionBuilds=0;
+  bool interactionMetal=false;
 };
 
 struct Phase4RenderInputs {
@@ -34,6 +44,7 @@ struct Phase4RenderInputs {
   ImageGeometry geometry{};
   const ConstImageView* mask = nullptr;
   Phase4ResearchCache* cache = nullptr;
+  int backendIdentity=0;
   // Optional hybrid accelerator. False means unsupported/failure and the
   // unchanged CPU reference runs. Spectral must stay CPU-only.
   std::function<bool(ConstYabPlanes,const PublicPlateSet&,const Phase4ChunkSynthesis&,

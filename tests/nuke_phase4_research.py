@@ -21,7 +21,7 @@ for value, label in [(1,"C0 A3 Passthrough"),(0,"C1 Bounded Poisson"),(2,"C3 Reg
     assert required.issubset(node.knobs()), required.difference(node.knobs())
     # Existing-node default comparison is not changed by descriptor additions.
     assert node["comparisonMode"].value() != "Automatic Plate Graph (Phase 4)"
-    assert node["pigmentInterface"].value() == "Existing Comparisons"
+    assert node["pigmentInterface"].value() == "Pigment"
     assert node["phase4ColorInteraction"].values() == ["Linear YAB", "Density", "Spectral Pigment"]
     assert node["phase4ColorInteraction"].value() == "Linear YAB"
     node["pigmentInterface"].setValue(2)
@@ -66,7 +66,7 @@ artist_write["datatype"].setValue("32 bit float")
 nuke.execute(artist_write, 1, 1)
 artist_before = nuke.nodes.Read(file=artist_write["file"].value())
 artist["pigmentCopyToResearch"].execute()
-assert artist["pigmentInterface"].value() == "Research / Compare"
+assert artist["pigmentInterface"].value() == "Research"
 for name, expected in {"phase4PlateScale":64,"phase4LumaChunkScale":16,"phase4ChromaChunkScale":96,"phase4ChromaSupportRatio":2.5,"phase4YComplexity":.6,"phase4ABComplexity":.2}.items():
     assert abs(artist[name].value()-expected) < 1e-6, (name, artist[name].value(), expected)
 assert artist["phase4IndependentComplexity"].value()

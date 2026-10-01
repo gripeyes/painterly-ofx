@@ -18,6 +18,7 @@ struct Phase4AutomaticResult {
   LatentComponentSet latent;
   PublicPlateSet plates;
   SparseAffinityGraph analysisGraph;
+  std::vector<std::vector<float>> analysisPlateAlpha;
   Phase4GateDiagnostics diagnostics{};
   Phase4AutomaticResult(RectI bounds, int latentCount, int plateCount)
       : latent(bounds, latentCount), plates(bounds, plateCount) {}
@@ -27,5 +28,9 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
     ConstYabPlanes source, const Phase4Params& params,
     const ImageGeometry& geometry, const ExecutionContext& execution = {},
     Phase4AnalysisCache* cache=nullptr);
+
+void updatePhase4PlateSupports(Phase4AutomaticResult& result,
+    const Phase4Params& params,bool updateY,bool updateAB,
+    const ExecutionContext& execution = {});
 
 }  // namespace pigment

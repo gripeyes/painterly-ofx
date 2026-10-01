@@ -479,10 +479,14 @@ void copyChannel(const std::vector<float>&v,FloatPlaneView out) {
 Phase4ChunkSynthesis synthesizePhase4Chunks(ConstYabPlanes source,
     const PublicPlateSet &plates,const Phase4RegionHierarchy &hierarchy,
     const Phase4Params &params,const ExecutionContext &execution,
-    const Phase4BroadFormOptions &broadForm) {
+    const Phase4BroadFormOptions &broadForm,
+    const Phase4ChunkSynthesis* previous,bool updateY,bool updateAB) {
   (void)source;
+  if(previous && previous->simplifiedGradient.size()!=size_t(plates.count()))previous=nullptr;
+  if(!previous){updateY=true;updateAB=true;}
   Phase4ChunkSynthesis result(hierarchy.bounds);
-  for(int plate=0;plate<plates.count();++plate) {
+  if(previous)result=*previous;
+  else for(int plate=0;plate<plates.count();++plate) {
     result.plateAppearance.emplace_back(hierarchy.bounds);
     result.sourceGradient.emplace_back(hierarchy.bounds);
     result.simplifiedGradient.emplace_back(hierarchy.bounds);
@@ -495,23 +499,28 @@ Phase4ChunkSynthesis synthesizePhase4Chunks(ConstYabPlanes source,
   execution.parallelRows(0,plates.count(),[&](int begin,int end){
   for(int plate=begin;plate<end;++plate) {
     auto automatic=plates.appearance(plate);const auto &h=hierarchy.plates[size_t(plate)];
-    auto y=synthesizeChannel(automatic.y,plates.supportY(plate),h.yChunk,h.yChunkCount,h.yEdgeX,h.yEdgeY,
+    auto out=result.plateAppearance[size_t(plate)].view();
+    auto target=result.broadConstraintTargets[size_t(plate)].view();
+    auto influence=result.broadConstraintInfluence[size_t(plate)].view();
+    if(updateY){auto y=synthesizeChannel(automatic.y,plates.supportY(plate),h.yChunk,h.yChunkCount,h.yEdgeX,h.yEdgeY,
                              params.lumaChunkScale,params.yGradientComplexity<0?params.gradientComplexity:params.yGradientComplexity,execution,
                              broadForm.enabled,broadForm.spacingY,broadForm.strengthY,broadForm.firstStrengthY,broadForm.secondStrengthY);
-    auto a=synthesizeChannel(automatic.a,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
+    result.solver[size_t(plate)][0]=y.solver;copyChannel(y.values,out.y);
+    copyChannel(y.gradient,result.simplifiedGradient[size_t(plate)].view());
+    copyChannel(y.model,result.primitiveSelection[size_t(plate)].view());copyChannel(y.error,result.fitError[size_t(plate)].view());
+    copyChannel(y.broadTarget,target.y);copyChannel(y.broadInfluence,influence.y);
+    }
+    if(updateAB){auto a=synthesizeChannel(automatic.a,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
                              params.chromaChunkScale,params.abGradientComplexity<0?params.gradientComplexity:params.abGradientComplexity,execution,
                              broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB,broadForm.firstStrengthAB,broadForm.secondStrengthAB);
     auto b=synthesizeChannel(automatic.b,plates.supportAB(plate),h.abChunk,h.abChunkCount,h.abEdgeX,h.abEdgeY,
                              params.chromaChunkScale,params.abGradientComplexity<0?params.gradientComplexity:params.abGradientComplexity,execution,
                              broadForm.enabled,broadForm.spacingAB,broadForm.strengthAB,broadForm.firstStrengthAB,broadForm.secondStrengthAB);
-    result.solver[size_t(plate)]={y.solver,a.solver,b.solver};
-    auto out=result.plateAppearance[size_t(plate)].view();copyChannel(y.values,out.y);copyChannel(a.values,out.a);copyChannel(b.values,out.b);
-    copyChannel(y.gradient,result.simplifiedGradient[size_t(plate)].view());
-    copyChannel(y.model,result.primitiveSelection[size_t(plate)].view());copyChannel(y.error,result.fitError[size_t(plate)].view());
-    auto target=result.broadConstraintTargets[size_t(plate)].view();
-    copyChannel(y.broadTarget,target.y);copyChannel(a.broadTarget,target.a);copyChannel(b.broadTarget,target.b);
-    auto influence=result.broadConstraintInfluence[size_t(plate)].view();
-    copyChannel(y.broadInfluence,influence.y);copyChannel(a.broadInfluence,influence.a);copyChannel(b.broadInfluence,influence.b);
+    result.solver[size_t(plate)][1]=a.solver;result.solver[size_t(plate)][2]=b.solver;
+    copyChannel(a.values,out.a);copyChannel(b.values,out.b);
+    copyChannel(a.broadTarget,target.a);copyChannel(b.broadTarget,target.b);
+    copyChannel(a.broadInfluence,influence.a);copyChannel(b.broadInfluence,influence.b);
+    }
     auto sg=result.sourceGradient[size_t(plate)].view();
     for(int yy=hierarchy.bounds.y1;yy<hierarchy.bounds.y2;++yy) for(int x=hierarchy.bounds.x1;x<hierarchy.bounds.x2;++x) {
       int xp=std::min(hierarchy.bounds.x2-1,x+1),yp=std::min(hierarchy.bounds.y2-1,yy+1);

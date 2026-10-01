@@ -49,6 +49,8 @@ synthesizePhase4Chunks(ConstYabPlanes source, const PublicPlateSet &plates,
                        const Phase4RegionHierarchy &hierarchy,
                        const Phase4Params &params,
                        const ExecutionContext &execution = {},
-                       const Phase4BroadFormOptions &broadForm = {});
+                       const Phase4BroadFormOptions &broadForm = {},
+                       const Phase4ChunkSynthesis* previous = nullptr,
+                       bool updateY = true, bool updateAB = true);
 
 } // namespace pigment

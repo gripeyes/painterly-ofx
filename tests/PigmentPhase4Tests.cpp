@@ -1,6 +1,7 @@
 #include "core/ChunkGradientSynthesis.h"
 #include "core/LatentPlateGraph.h"
 #include "core/PigmentPhase4.h"
+#include "core/Phase4Interactive.h"
 #include "core/PigmentControls.h"
 #include "core/PlateSpill.h"
 #include "core/RegionHierarchy.h"
@@ -185,6 +186,12 @@ void regionHierarchy() {
   parameters.chromaChunkScale = 96;
   auto merged =
       pigment::buildPhase4RegionHierarchy(source, automatic.plates, parameters);
+  auto recut=zero;pigment::cutPhase4RegionHierarchy(recut,48,96);
+  auto parallel=pigment::buildPhase4RegionHierarchy(source,automatic.plates,parameters,{[]{return false;},pigment::boundedParallelRows,nullptr});
+  for(size_t i=0;i<merged.plates.size();++i){
+    check(recut.plates[i].yChunk==merged.plates[i].yChunk && recut.plates[i].abChunk==merged.plates[i].abChunk,"Cached hierarchy recut equals full rebuild bit-exactly");
+    check(parallel.plates[i].yChunk==merged.plates[i].yChunk && parallel.plates[i].abChunk==merged.plates[i].abChunk,"Independent parallel plate hierarchies match serial reference");
+  }
   for (size_t plate = 0; plate < merged.plates.size(); ++plate) {
     check(merged.plates[plate].yChunkCount <= zero.plates[plate].yChunkCount &&
               merged.plates[plate].abChunkCount <=
@@ -229,6 +236,12 @@ void regionHierarchy() {
   auto parallelTransport=pigment::preparePhase4SpillTransport(automatic.plates,automatic.analysisGraph,parameters,
       {[]{return false;},pigment::boundedParallelRows,nullptr});
   check(serialTransport.y==parallelTransport.y && serialTransport.ab==parallelTransport.ab,"Parallel independent directed transport is bit-exact");
+  auto changedY=parameters;changedY.yGradientComplexity=.72f;
+  auto partial=pigment::synthesizePhase4Chunks(source,automatic.plates,merged,changedY,{}, {},&synthesis,true,false);
+  auto full=pigment::synthesizePhase4Chunks(source,automatic.plates,merged,changedY);
+  for(int i=0;i<automatic.plates.count();++i){auto a=partial.plateAppearance[i].view(),c=full.plateAppearance[i].view();
+    for(int y=bounds.y1;y<bounds.y2;++y)for(int x=bounds.x1;x<bounds.x2;++x)
+      check(a.y.at(x,y)==c.y.at(x,y) && a.a.at(x,y)==c.a.at(x,y) && a.b.at(x,y)==c.b.at(x,y),"Independent Y field rebuild equals full reference bit exactly");}
   bool changed = false;
   for (int plate = 0; plate < automatic.plates.count(); ++plate) {
     auto before = automatic.plates.appearance(plate);
@@ -614,7 +627,11 @@ void researchRepresentationsAndCache() {
   in.params.phase4.lumaChunkScale=1;in.params.phase4.chromaChunkScale=2;
   in.params.phase4.representation=pigment::Phase4Representation::A3Passthrough;
   pigment::processPigmentPhase4(in);
+  check(cache.hierarchyBuilds==hbuilds,"Organization edits only recut frozen merge trees");
   check(cache.transportBuilds==tbuilds,"Hierarchy cuts do not invalidate intrinsic transport");
+  auto ibuilds=cache.interactionBuilds;
+  in.params.amount=.8f;in.params.mix=.7f;pigment::processPigmentPhase4(in);
+  check(cache.interactionBuilds==ibuilds,"Amount/Mix reuse appearance interaction and only finalize");
   in.params.phase4.spillReach=0;pigment::processPigmentPhase4(in);
   check(cache.transportBuilds==tbuilds+1,"Reach change invalidates transport");
   {pigment::RectI mb{4,4,8,8};std::vector<float> data(16,0);pigment::ConstImageView mask{data.data(),4,mb,1};in.mask=&mask;
@@ -638,19 +655,42 @@ void sourceOnlyAnalysisCache() {
   pigment::Phase4Params p;p.latentCount=12;p.plateCount=4;
   pigment::Phase4AnalysisCache cache;
   auto original=static_cast<const pigment::OwnedYabPlanes&>(source).view();
-  pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
+  auto supportOnly=pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
   auto builds=cache.builds;p.plateScale=96;p.chromaSupportRatio=3;
   auto reused=pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
   auto fresh=pigment::buildPhase4AutomaticPlates(original,p,{}, {[]{return false;},pigment::boundedParallelRows,nullptr});
+  pigment::updatePhase4PlateSupports(supportOnly,p,true,true,{[]{return false;},pigment::boundedParallelRows,nullptr});
   check(cache.builds==builds,"Plate scale/support changes reuse frozen source A1/A2/A3 analysis");
   for(int i=0;i<p.plateCount;++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){auto a=reused.plates.appearance(i),c=fresh.plates.appearance(i);
     check(a.y.at(x,y)==c.y.at(x,y) && a.a.at(x,y)==c.a.at(x,y) && a.b.at(x,y)==c.b.at(x,y),"Cached/fresh public appearance bit exact");
     check(reused.plates.alpha(i).at(x,y)==fresh.plates.alpha(i).at(x,y) && reused.plates.supportY(i).at(x,y)==fresh.plates.supportY(i).at(x,y) && reused.plates.supportAB(i).at(x,y)==fresh.plates.supportAB(i).at(x,y),"Cached/fresh alpha and independent supports bit exact");}
+  for(int i=0;i<p.plateCount;++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x)
+    check(supportOnly.plates.supportY(i).at(x,y)==fresh.plates.supportY(i).at(x,y) && supportOnly.plates.supportAB(i).at(x,y)==fresh.plates.supportAB(i).at(x,y),"Support-only rebuild is bit exact with full automatic rebuild");
   v.y.at(b.x1,b.y1)+=.1f;pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
   check(cache.builds==builds+1,"Source change invalidates frozen source analysis cache");
 }
 } // namespace
+void interactiveExecution() {
+  check(pigment::phase4PreviewAnalysisSize(0)==64 && pigment::phase4PreviewAnalysisSize(1)==128 && pigment::phase4PreviewAnalysisSize(2)==256,"Preview Quality presets preserve explicit analysis budgets");
+  pigment::RectI bounds{-3,7,77,55};std::vector<float> source(size_t(80)*48*4),out(source.size()),parallel(out.size());
+  for(int y=0;y<48;++y)for(int x=0;x<80;++x){size_t i=(size_t(y)*80+x)*4;source[i]=.02f*x-.15f;source[i+1]=.02f*y;source[i+2]=.03f*std::sin(float(x));source[i+3]=x==0?0.f:.7f;}
+  pigment::IntegratedPigmentParams p;p.phase4.latentCount=12;p.phase4.plateCount=4;p.amount=1;p.mix=1;p.premultiplied=true;
+  pigment::Phase4RenderInputs in{{source.data(),320,bounds,4},{out.data(),320,bounds,4},bounds,p};
+  pigment::Phase4InteractiveCache cache;
+  pigment::processPhase4Interactive(in,cache,64);auto stages=cache.stages.automaticBuilds;
+  for(size_t i=0;i<out.size();++i)check(std::isfinite(out[i]),"Interactive HDR/negative output finite");
+  for(size_t i=0;i<source.size()/4;++i){check(source[i*4+3]==out[i*4+3],"Interactive alpha bit exact");if(i%80==0)for(int c=0;c<3;++c)check(source[i*4+c]==out[i*4+c],"Interactive zero-alpha hidden RGB preserved");}
+  in.params.phase4.spillAmount=.6f;in.params.phase4.colorInteraction=pigment::ColorInteractionLaw::Density;
+  pigment::processPhase4Interactive(in,cache,64);
+  check(cache.guidanceBuilds==1 && cache.stages.automaticBuilds==stages,"Interactive downstream edits reuse guidance and source stages");
+  pigment::Phase4InteractiveCache separate;in.destination.data=parallel.data();
+  pigment::processPhase4Interactive(in,separate,64,{[]{return false;},pigment::boundedParallelRows,nullptr});
+  check(out==parallel,"Interactive serial/parallel deterministic parity");
+  in.params.amount=0;pigment::processPhase4Interactive(in,separate,64);
+  check(parallel==source,"Interactive Amount zero exact identity");
+}
 int main() {
+  interactiveExecution();
   artistControlMapping();
   parameterSemantics();
   automaticPlates();

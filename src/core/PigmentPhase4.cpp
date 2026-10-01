@@ -82,33 +82,49 @@ processPigmentPhase4(const Phase4RenderInputs &in,
   uint64_t hash=1469598103934665603ull;
   for(auto field:{ov.y,ov.a,ov.b})for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){uint32_t bits;float v=field.at(x,y);std::memcpy(&bits,&v,4);hash^=bits;hash*=1099511628211ull;}
   std::vector<double> key{double(hash>>32),double(uint32_t(hash)),double(b.x1),double(b.y1),double(b.x2),double(b.y2),in.geometry.pixelAspect,in.geometry.renderScaleX,in.geometry.renderScaleY,
-    double(p.phase4.latentCount),double(p.phase4.plateCount),p.phase4.plateScale,p.phase4.plateOverlap,p.phase4.chromaSupportRatio,p.phase4.lumaChromaCoupling};
+    double(p.phase4.latentCount),double(p.phase4.plateCount),p.phase4.plateOverlap};
+  auto ySupportKey=key;ySupportKey.push_back(phase4SupportRadiusY(p.phase4));
+  auto abSupportKey=key;abSupportKey.push_back(phase4SupportRadiusAB(p.phase4));
   if(!cache.automatic || cache.automaticKey!=key){
     auto frozen=p.phase4;frozen.structureRespect=.8f; // approved intrinsic support context; Spill respect is independent
     auto next=std::make_unique<Phase4AutomaticResult>(buildPhase4AutomaticPlates(static_cast<const OwnedYabPlanes&>(original).view(),frozen,in.geometry,execution,&cache.sourceAnalysis));
     if(execution.cancelled())throw std::runtime_error("Phase 4 automatic build cancelled");
     if(!next->diagnostics.eigenspaceFinite || !next->diagnostics.componentsFinite || !next->diagnostics.appearanceFinite)return {next->diagnostics};
-    cache.automatic=std::move(next);cache.automaticKey=key;cache.hierarchy.reset();cache.synthesis.reset();++cache.automaticBuilds;
+    cache.automatic=std::move(next);cache.automaticKey=key;cache.supportKeyY=ySupportKey;cache.supportKeyAB=abSupportKey;++cache.supportBuildsY;++cache.supportBuildsAB;cache.hierarchy.reset();cache.synthesis.reset();++cache.automaticBuilds;
+  }
+  if(cache.supportKeyY!=ySupportKey || cache.supportKeyAB!=abSupportKey){
+    auto frozen=p.phase4;frozen.structureRespect=.8f;
+    bool yChanged=cache.supportKeyY!=ySupportKey,abChanged=cache.supportKeyAB!=abSupportKey;
+    updatePhase4PlateSupports(*cache.automatic,frozen,yChanged,abChanged,execution);
+    if(execution.cancelled())throw std::runtime_error("Phase 4 support cancelled");
+    cache.supportKeyY=ySupportKey;cache.supportKeyAB=abSupportKey;cache.supportBuildsY+=yChanged;cache.supportBuildsAB+=abChanged;
   }
   diagnostics.analysisMs=elapsed();
-  auto hkey=key;for(float v:{p.phase4.ySupport,p.phase4.abSupport,p.phase4.boundaryLock,p.phase4.mergeSelectivity,p.phase4.internalVariation,p.phase4.lumaChunkScale,p.phase4.chromaChunkScale})hkey.push_back(v);
+  auto hkey=key;for(float v:{phase4SupportRadiusY(p.phase4),phase4SupportRadiusAB(p.phase4),p.phase4.lumaChromaCoupling,p.phase4.ySupport,p.phase4.abSupport,p.phase4.boundaryLock,p.phase4.mergeSelectivity,p.phase4.internalVariation})hkey.push_back(v);
   if(!cache.hierarchy || cache.hierarchyKey!=hkey){
     auto supported=std::make_unique<PublicPlateSet>(cache.automatic->plates);
     for(int i=0;i<supported->count();++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){supported->supportY(i).at(x,y)=clamp01(supported->supportY(i).at(x,y)*p.phase4.ySupport);supported->supportAB(i).at(x,y)=clamp01(supported->supportAB(i).at(x,y)*p.phase4.abSupport);}
     auto next=std::make_unique<Phase4RegionHierarchy>(buildPhase4RegionHierarchy(static_cast<const OwnedYabPlanes&>(original).view(),*supported,p.phase4,execution));
     if(execution.cancelled())throw std::runtime_error("Phase 4 hierarchy build cancelled");
-    cache.supported=std::move(supported);cache.hierarchy=std::move(next);cache.hierarchyKey=hkey;cache.synthesis.reset();++cache.hierarchyBuilds;
+    cache.supported=std::move(supported);cache.hierarchy=std::move(next);cache.hierarchyKey=hkey;cache.hierarchyCutKey.clear();cache.synthesis.reset();++cache.hierarchyBuilds;
   }
+  auto cutKey=hkey;cutKey.push_back(p.phase4.lumaChunkScale);cutKey.push_back(p.phase4.chromaChunkScale);
+  if(cache.hierarchyCutKey!=cutKey){cutPhase4RegionHierarchy(*cache.hierarchy,p.phase4.lumaChunkScale,p.phase4.chromaChunkScale);cache.hierarchyCutKey=cutKey;++cache.hierarchyCuts;}
   diagnostics.hierarchyMs=elapsed();
-  auto skey=hkey;skey.push_back(int(p.phase4.representation));skey.push_back(p.phase4.gradientComplexity);
+  auto skey=cutKey;skey.push_back(int(p.phase4.representation));skey.push_back(p.phase4.gradientComplexity);
   skey.push_back(p.phase4.yGradientComplexity);skey.push_back(p.phase4.abGradientComplexity);
+  auto fieldKeyY=hkey,fieldKeyAB=hkey;
+  for(double v:{double(p.phase4.representation),double(p.phase4.lumaChunkScale),double(p.phase4.yGradientComplexity<0?p.phase4.gradientComplexity:p.phase4.yGradientComplexity)})fieldKeyY.push_back(v);
+  for(double v:{double(p.phase4.representation),double(p.phase4.chromaChunkScale),double(p.phase4.abGradientComplexity<0?p.phase4.gradientComplexity:p.phase4.abGradientComplexity)})fieldKeyAB.push_back(v);
+  const bool rebuildY=!cache.synthesis || cache.fieldKeyY!=fieldKeyY;
+  const bool rebuildAB=!cache.synthesis || cache.fieldKeyAB!=fieldKeyAB;
   if(!cache.synthesis || cache.synthesisKey!=skey){
     auto next=std::make_unique<Phase4ChunkSynthesis>(b);
     if(p.phase4.lumaChunkScale==0 && p.phase4.chromaChunkScale==0){
       for(int i=0;i<cache.supported->count();++i){next->plateAppearance.emplace_back(b);auto from=cache.supported->appearance(i);
         auto dst=next->plateAppearance.back().view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){dst.y.at(x,y)=from.y.at(x,y);dst.a.at(x,y)=from.a.at(x,y);dst.b.at(x,y)=from.b.at(x,y);}}
     }
-    else if(p.phase4.representation==Phase4Representation::Poisson)*next=synthesizePhase4Chunks(static_cast<const OwnedYabPlanes&>(original).view(),*cache.supported,*cache.hierarchy,p.phase4,execution);
+    else if(p.phase4.representation==Phase4Representation::Poisson)*next=synthesizePhase4Chunks(static_cast<const OwnedYabPlanes&>(original).view(),*cache.supported,*cache.hierarchy,p.phase4,execution,{},cache.synthesis.get(),rebuildY,rebuildAB);
     else if(p.phase4.representation==Phase4Representation::SecondMoments){
       Phase4BroadFormOptions preserved;preserved.enabled=true;
       preserved.firstStrengthY=20;preserved.firstStrengthAB=2.5;
@@ -123,6 +139,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
     if(execution.cancelled())throw std::runtime_error("Phase 4 synthesis build cancelled");
     for(const auto &plate:next->solver)for(const auto &solver:plate)if(!solver.converged)return {cache.automatic->diagnostics,false};
     cache.synthesis=std::move(next);cache.synthesisKey=skey;++cache.synthesisBuilds;
+    cache.fieldKeyY=fieldKeyY;cache.fieldKeyAB=fieldKeyAB;cache.fieldBuildsY+=rebuildY;cache.fieldBuildsAB+=rebuildAB;
   }
   const auto &automatic=*cache.automatic;
   const auto &plates=*cache.supported;
@@ -132,7 +149,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
   for(const auto &plate : synthesis.solver)
     for(const auto &solver : plate)
       if(!solver.converged) return {automatic.diagnostics, false};
-  auto tkey=key;tkey.push_back(p.phase4.ySupport);tkey.push_back(p.phase4.abSupport);
+  auto tkey=key;tkey.push_back(phase4SupportRadiusY(p.phase4));tkey.push_back(phase4SupportRadiusAB(p.phase4));tkey.push_back(p.phase4.ySupport);tkey.push_back(p.phase4.abSupport);
   tkey.push_back(p.phase4.spillReach);tkey.push_back(p.phase4.structureRespect);
   if(!cache.transport || cache.transportKey!=tkey){
     auto next=std::make_unique<Phase4SpillTransport>();
@@ -143,12 +160,20 @@ processPigmentPhase4(const Phase4RenderInputs &in,
     cache.transport=std::move(next);cache.transportKey=tkey;++cache.transportBuilds;
   }
   diagnostics.transportMs=elapsed();
-  Phase4SpillResult spill(b);
+  auto ikey=skey;ikey.insert(ikey.end(),tkey.begin(),tkey.end());
+  for(double v:{double(p.gamut),double(in.backendIdentity),double(bool(in.accelerateSpill)),double(p.phase4.colorInteraction),double(p.phase4.pigmentDensity),double(p.phase4.spillAmount),double(p.phase4.spillAsymmetry),double(p.phase4.lumaSpill),double(p.phase4.chromaSpill)})ikey.push_back(v);
+  for(const auto& plate:p.phase4.plates)for(double v:{double(plate.enabled),double(plate.weight),double(plate.tone),double(plate.biasA),double(plate.biasB),double(plate.spillOut),double(plate.receiveSpill)})ikey.push_back(v);
+  if(!cache.interaction || cache.interactionKey!=ikey){
+  auto next=std::make_unique<Phase4SpillResult>(b);
   if(in.accelerateSpill && p.phase4.colorInteraction!=ColorInteractionLaw::SpectralPigment && !execution.cancelled()){
     diagnostics.metalAttempted=true;
-    diagnostics.metalSpill=in.accelerateSpill(static_cast<const OwnedYabPlanes&>(original).view(),plates,synthesis,automatic.analysisGraph,p.phase4,*cache.transport,p.gamut,spill);
+    diagnostics.metalSpill=in.accelerateSpill(static_cast<const OwnedYabPlanes&>(original).view(),plates,synthesis,automatic.analysisGraph,p.phase4,*cache.transport,p.gamut,*next);
   }
-  if(!diagnostics.metalSpill)spill=applyPhase4Spill(static_cast<const OwnedYabPlanes&>(original).view(),plates,synthesis,automatic.analysisGraph,p.phase4,execution,cache.transport.get(),p.gamut);
+  if(!diagnostics.metalSpill)*next=applyPhase4Spill(static_cast<const OwnedYabPlanes&>(original).view(),plates,synthesis,automatic.analysisGraph,p.phase4,execution,cache.transport.get(),p.gamut);
+  if(execution.cancelled())throw std::runtime_error("Phase 4 interaction cancelled");
+  cache.interaction=std::move(next);cache.interactionKey=ikey;cache.interactionMetal=diagnostics.metalSpill;++cache.interactionBuilds;
+  }else diagnostics.metalSpill=cache.interactionMetal;
+  const auto& spill=*cache.interaction;
   diagnostics.interactionMs=elapsed();
   std::optional<Phase4SpillResult> artisticPreSpill;
   if (p.debugView == PigmentDebugView::Phase4PreSpill || p.debugView == PigmentDebugView::Phase4SpillDifference) {

@@ -61,6 +61,7 @@ add_library(pigment_core STATIC
   src/core/PlateSpill.cpp
   src/core/ColorInteraction.cpp
   src/core/PigmentPhase4.cpp
+  src/core/Phase4Interactive.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)

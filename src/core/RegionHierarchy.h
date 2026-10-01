@@ -45,4 +45,8 @@ buildPhase4RegionHierarchy(ConstYabPlanes source, const PublicPlateSet &plates,
                            const Phase4Params &params,
                            const ExecutionContext &execution = {});
 
+// Cut already-built monotone trees; no source cue, RAG or merge rebuild.
+void cutPhase4RegionHierarchy(Phase4RegionHierarchy &hierarchy,
+                             float yScale, float abScale);
+
 } // namespace pigment

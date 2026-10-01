@@ -483,10 +483,11 @@ buildPhase4RegionHierarchy(ConstYabPlanes source, const PublicPlateSet &plates,
   }
 
   result.plates.reserve(plates.count());
-  for (int plate = 0; plate < plates.count(); ++plate) {
+  for(int plate=0;plate<plates.count();++plate)result.plates.emplace_back(bounds);
+  execution.parallelRows(0,plates.count(),[&](int first,int last){
+  for (int plate = first; plate < last; ++plate) {
     if (execution.cancelled()) throw std::runtime_error("Phase 4 hierarchy cancelled");
-    result.plates.emplace_back(bounds);
-    auto &hierarchy = result.plates.back();
+    auto &hierarchy = result.plates[size_t(plate)];
     std::vector<RegionStats> yStats(result.atomicRegionCount),
         abStats(result.atomicRegionCount);
     auto appearance = plates.appearance(plate);
@@ -585,8 +586,24 @@ buildPhase4RegionHierarchy(ConstYabPlanes source, const PublicPlateSet &plates,
                    hierarchy.yRetainedBoundaries.view());
     markBoundaries(hierarchy.abChunk, hierarchy.abRemovedBoundaries.view(),
                    hierarchy.abRetainedBoundaries.view());
-  }
+  }});
   return result;
+}
+
+void cutPhase4RegionHierarchy(Phase4RegionHierarchy &h,float yScale,float abScale){
+  const auto b=h.bounds;const int width=b.width(),n=width*b.height();
+  for(auto& plate:h.plates){
+    auto cut=[&](const std::vector<Phase4MergeNode>& tree,float scale,std::vector<int>& chunks,int& count,OwnedPlane& removed,OwnedPlane& retained){
+      std::vector<int> roots(tree.size()),labels(tree.size(),-1);for(size_t i=0;i<roots.size();++i)roots[i]=int(i);
+      for(int i=int(tree.size())-1;i>=0;--i)for(int child:{tree[i].left,tree[i].right})if(child>=0)roots[child]=(scale>0 && tree[i].level<=scale)?roots[i]:child;
+      count=0;for(int i=0;i<h.atomicRegionCount;++i)if(labels[roots[i]]<0)labels[roots[i]]=count++;
+      chunks.resize(n);for(int p=0;p<n;++p)chunks[p]=labels[roots[h.atomicRegion[p]]];
+      auto r=removed.view(),t=retained.view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x)r.at(x,y)=t.at(x,y)=0;
+      for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){int p=(y-b.y1)*width+x-b.x1;for(auto [dx,dy]:std::array<std::pair<int,int>,2>{{{1,0},{0,1}}}){int xx=x+dx,yy=y+dy;if(xx>=b.x2 || yy>=b.y2)continue;int q=p+dx+dy*width;if(h.atomicRegion[p]==h.atomicRegion[q])continue;auto f=chunks[p]==chunks[q]?r:t;f.at(x,y)=f.at(xx,yy)=1;}}
+    };
+    cut(plate.yTree,yScale,plate.yChunk,plate.yChunkCount,plate.yRemovedBoundaries,plate.yRetainedBoundaries);
+    cut(plate.abTree,abScale,plate.abChunk,plate.abChunkCount,plate.abRemovedBoundaries,plate.abRetainedBoundaries);
+  }
 }
 
 } // namespace pigment
