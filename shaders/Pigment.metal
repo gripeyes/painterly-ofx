@@ -1,6 +1,88 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// Exact max-product fixed point over incoming directed edges. The attenuation
+// factors are computed by the CPU reference, including zero structural/F
+// capacities; scheduling changes, not topology or Reach semantics.
+kernel void pigment_phase4_transport(device const uint* rows [[buffer(0)]],
+    device const uint* from [[buffer(1)]],device const float* factor [[buffer(2)]],
+    device const float* previous [[buffer(3)]],device float* next [[buffer(4)]],
+    device atomic_uint* changed [[buffer(5)]],constant uint2& shape [[buffer(6)]],
+    uint n [[thread_position_in_grid]]) {
+  if(n>=shape.x*shape.y)return;
+  uint node=n%shape.x,field=n/shape.x;float v=previous[n];
+  for(uint e=rows[node];e<rows[node+1];++e)v=max(v,previous[field*shape.x+from[e]]*factor[e]);
+  next[n]=v;if(v>previous[n])atomic_fetch_or_explicit(changed,1u,memory_order_relaxed);
+}
+
+// Phase 4 hybrid path: source analysis, topology and exact directed transport
+// remain CPU reference inputs. Packed scalars avoid float3 ABI padding.
+struct Phase4SpillGpu {
+  uint pixels, plates, law;
+  float amount, luma, chroma, asymmetry, density, whiteX, whiteZ;
+  float toXYZ[9], toRGB[9], control[8*7];
+};
+inline float3 p4_to_rgb(float3 v, constant Phase4SpillGpu& p) {
+  float3 xyz=float3((v.x+v.y)*p.whiteX,v.x,(v.x+v.z)*p.whiteZ);
+  return float3(dot(float3(p.toRGB[0],p.toRGB[1],p.toRGB[2]),xyz),
+    dot(float3(p.toRGB[3],p.toRGB[4],p.toRGB[5]),xyz),
+    dot(float3(p.toRGB[6],p.toRGB[7],p.toRGB[8]),xyz));
+}
+inline float3 p4_to_yab(float3 v, constant Phase4SpillGpu& p) {
+  float3 xyz=float3(dot(float3(p.toXYZ[0],p.toXYZ[1],p.toXYZ[2]),v),
+    dot(float3(p.toXYZ[3],p.toXYZ[4],p.toXYZ[5]),v),
+    dot(float3(p.toXYZ[6],p.toXYZ[7],p.toXYZ[8]),v));
+  return float3(xyz.y,xyz.x/p.whiteX-xyz.y,xyz.z/p.whiteZ-xyz.y);
+}
+inline float3 p4_density(thread float* w, thread float* mag,
+    thread float3* absorption,thread float3* residual,uint count,
+    float3 linear,constant Phase4SpillGpu& p) {
+  float total=0,m=0;float3 a=0,r=0;uint occupied=0;
+  for(uint j=0;j<count;++j){total+=w[j];occupied+=w[j]>0;}
+  if(occupied<=1 || total<=0)return linear;
+  for(uint j=0;j<count;++j)if(w[j]>0){float t=w[j]/total;m+=t*mag[j];a+=t*absorption[j];r+=t*residual[j];}
+  float3 v=p4_to_yab(m*exp(-a)+r,p);
+  v.x=p.density==0?linear.x:linear.x+p.density*(v.x-linear.x);
+  return v;
+}
+kernel void pigment_phase4_spill(device const float* input [[buffer(0)]],
+    device const float* original [[buffer(1)]],device float* output [[buffer(2)]],
+    device float* composite [[buffer(3)]],constant Phase4SpillGpu& p [[buffer(4)]],
+    uint x [[thread_position_in_grid]]) {
+  if(x>=p.pixels)return;
+  float3 base[8],absorption[8],residual[8];float mag[8],alpha[8];
+  float sumAlpha=0;float3 final=0;
+  for(uint i=0;i<p.plates;++i){uint k=(i*p.pixels+x)*15,c=i*7;
+    base[i]=float3(input[k],input[k+1],input[k+2])+float3(p.control[c+2],p.control[c+3],p.control[c+4]);
+    alpha[i]=p.control[c]>0?max(0.f,p.control[c+1])*input[k+3]:0;sumAlpha+=alpha[i];
+    // CPU reference encoder preserves signed cancellation near RGB zero;
+    // Metal only mixes/decode this compact material state, never refits it.
+    if(p.law==1){mag[i]=input[k+8];absorption[i]=float3(input[k+9],input[k+10],input[k+11]);residual[i]=float3(input[k+12],input[k+13],input[k+14]);}
+  }
+  for(uint i=0;i<p.plates;++i){uint k=(i*p.pixels+x)*15,c=i*7;
+    float3 sum=base[i];float wy=1,wab=1,iy=0,iab=0,wY[8]={},wAB[8]={};wY[i]=wAB[i]=1;
+    if(p.control[c]>0 && p.amount>0)for(uint j=0;j<p.plates;++j){if(i==j || p.control[j*7]<=0)continue;
+      uint d=(j*p.pixels+x)*15;float dy=input[d+6],dab=input[d+7],ry=input[k+6],rab=input[k+7];
+      dy=p.asymmetry*dy+(1-p.asymmetry)*.5f*(dy+ry);
+      dab=p.asymmetry*dab+(1-p.asymmetry)*.5f*(dab+rab);
+      float controls=p.control[j*7+5]*p.control[c+6];
+      float ky=p.amount*p.luma*(dy*sqrt(max(0.f,input[k+4]*input[d+4]))*controls);
+      float kab=p.amount*p.chroma*(dab*sqrt(max(0.f,input[k+5]*input[d+5]))*controls);
+      wY[j]=ky;wAB[j]=kab;sum.x+=ky*base[j].x;sum.y+=kab*base[j].y;sum.z+=kab*base[j].z;
+      wy+=ky;wab+=kab;iy+=ky;iab+=kab;
+    }
+    float3 result=float3(sum.x/wy,sum.y/wab,sum.z/wab);
+    if(p.law==1){if(wy>1)result.x=p4_density(wY,mag,absorption,residual,p.plates,float3(result.x,0,0),p).x;
+      if(wab>1){float ly=base[i].x;for(uint j=0;j<p.plates;++j)if(j!=i)ly+=wAB[j]*base[j].x;
+        float3 v=p4_density(wAB,mag,absorption,residual,p.plates,float3(ly/wab,sum.y/wab,sum.z/wab),p);result.y=v.y;result.z=v.z;}}
+    uint o=(i*p.pixels+x)*5;output[o]=result.x;output[o+1]=result.y;output[o+2]=result.z;output[o+3]=iy;output[o+4]=iab;
+    if(sumAlpha>1e-8f)final+=(alpha[i]/sumAlpha)*result;
+  }
+  if(sumAlpha<=1e-8f)final=float3(original[x*3],original[x*3+1],original[x*3+2]);
+  composite[x*3]=final.x;composite[x*3+1]=final.y;composite[x*3+2]=final.z;
+}
+using namespace metal;
+
 struct ImageLayout {
   uint width;
   uint height;

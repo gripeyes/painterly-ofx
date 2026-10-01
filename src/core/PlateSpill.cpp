@@ -59,12 +59,14 @@ Phase4SpillTransport preparePhase4SpillTransport(const PublicPlateSet &plates,
     const SparseAffinityGraph &graph,const Phase4Params &params,const ExecutionContext &execution){
   Phase4SpillTransport result;auto bounds=plates.bounds();int width=bounds.width(),height=bounds.height();
   result.reach=params.spillReach;result.structureRespect=params.structureRespect;
-  for(int plate=0;plate<plates.count();++plate){std::vector<float> sy(size_t(graph.nodeCount())),sc(size_t(graph.nodeCount()));
+  result.y.resize(plates.count());result.ab.resize(plates.count());
+  execution.parallelRows(0,plates.count(),[&](int begin,int end){
+  for(int plate=begin;plate<end;++plate){std::vector<float> sy(size_t(graph.nodeCount())),sc(size_t(graph.nodeCount()));
     for(int gy=0;gy<graph.height;++gy)for(int gx=0;gx<graph.width;++gx){int x=bounds.x1+std::min(width-1,gx*width/graph.width),y=bounds.y1+std::min(height-1,gy*height/graph.height),node=gy*graph.width+gx;
       sy[size_t(node)]=plates.supportY(plate).at(x,y);sc[size_t(node)]=plates.supportAB(plate).at(x,y);}
-    result.y.push_back(transport(graph,sy,params.spillReach,params.structureRespect,execution));
-    result.ab.push_back(transport(graph,sc,params.spillReach,params.structureRespect,execution));
-  }return result;
+    result.y[size_t(plate)]=transport(graph,sy,params.spillReach,params.structureRespect,execution);
+    result.ab[size_t(plate)]=transport(graph,sc,params.spillReach,params.structureRespect,execution);
+  }});return result;
 }
 
 Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,

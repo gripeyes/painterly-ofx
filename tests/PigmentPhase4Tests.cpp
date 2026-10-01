@@ -220,6 +220,15 @@ void regionHierarchy() {
 
   auto synthesis = pigment::synthesizePhase4Chunks(source, automatic.plates,
                                                    merged, parameters);
+  auto parallelSynthesis=pigment::synthesizePhase4Chunks(source,automatic.plates,merged,parameters,
+      {[]{return false;},pigment::boundedParallelRows,nullptr});
+  for(int i=0;i<automatic.plates.count();++i){auto a=synthesis.plateAppearance[i].view(),c=parallelSynthesis.plateAppearance[i].view();
+    for(int y=bounds.y1;y<bounds.y2;++y)for(int x=bounds.x1;x<bounds.x2;++x)
+      check(a.y.at(x,y)==c.y.at(x,y) && a.a.at(x,y)==c.a.at(x,y) && a.b.at(x,y)==c.b.at(x,y),"Parallel plate bounded solves are bit-exact");}
+  auto serialTransport=pigment::preparePhase4SpillTransport(automatic.plates,automatic.analysisGraph,parameters);
+  auto parallelTransport=pigment::preparePhase4SpillTransport(automatic.plates,automatic.analysisGraph,parameters,
+      {[]{return false;},pigment::boundedParallelRows,nullptr});
+  check(serialTransport.y==parallelTransport.y && serialTransport.ab==parallelTransport.ab,"Parallel independent directed transport is bit-exact");
   bool changed = false;
   for (int plate = 0; plate < automatic.plates.count(); ++plate) {
     auto before = automatic.plates.appearance(plate);
@@ -594,16 +603,51 @@ void researchRepresentationsAndCache() {
   in.params.phase4.spillAmount=.8;in.params.phase4.lumaSpill=0;in.params.phase4.spillReach=128;in.params.phase4.plates[0].biasA=.03;
   pigment::processPigmentPhase4(in);
   check(cache.automaticBuilds==abuilds && cache.hierarchyBuilds==hbuilds && cache.synthesisBuilds==sbuilds,"Creative/Spill controls reuse frozen upstream and selected synthesis");
+  auto tbuilds=cache.transportBuilds;
   for(auto law:{pigment::ColorInteractionLaw::Density,pigment::ColorInteractionLaw::SpectralPigment}){
     in.params.phase4.colorInteraction=law;in.params.phase4.pigmentDensity=.5f;
     pigment::processPigmentPhase4(in);
     check(cache.automaticBuilds==abuilds && cache.hierarchyBuilds==hbuilds && cache.synthesisBuilds==sbuilds,"Color law and density reuse frozen A1-B and Gate-C fields");
+    check(cache.transportBuilds==tbuilds,"Color law and density reuse exact transport");
   }
   for(int i=0;i<256;++i)check(dst[4*i+3]==src[4*i+3],"Research representations preserve alpha");
+  in.params.phase4.lumaChunkScale=1;in.params.phase4.chromaChunkScale=2;
+  in.params.phase4.representation=pigment::Phase4Representation::A3Passthrough;
+  pigment::processPigmentPhase4(in);
+  check(cache.transportBuilds==tbuilds,"Hierarchy cuts do not invalidate intrinsic transport");
+  in.params.phase4.spillReach=0;pigment::processPigmentPhase4(in);
+  check(cache.transportBuilds==tbuilds+1,"Reach change invalidates transport");
+  {pigment::RectI mb{4,4,8,8};std::vector<float> data(16,0);pigment::ConstImageView mask{data.data(),4,mb,1};in.mask=&mask;
+    pigment::processPigmentPhase4(in);check(dst==src,"Zero/narrow mask gives bit-exact source inside and outside Mask RoD");in.mask=nullptr;}
+  in.params.phase4.colorInteraction=pigment::ColorInteractionLaw::LinearYAB;
+  pigment::processPigmentPhase4(in);auto fallbackReference=dst;int attempts=0;
+  in.accelerateSpill=[&](auto,auto&,auto&,auto&,auto&,auto&,auto,auto&){++attempts;return false;};
+  auto fallback=pigment::processPigmentPhase4(in);
+  check(attempts==1 && !fallback.metalSpill && dst==fallbackReference,"Failed optional Metal acceleration returns exact CPU reference");
+  in.params.phase4.colorInteraction=pigment::ColorInteractionLaw::SpectralPigment;
+  pigment::processPigmentPhase4(in);check(attempts==1,"Spectral never invokes Metal appearance accelerator");
+  in.accelerateSpill={};
   for(auto debug:{pigment::PigmentDebugView::Phase4Source,pigment::PigmentDebugView::Phase4PublicReconstruction,pigment::PigmentDebugView::Phase4PreSpill,pigment::PigmentDebugView::Phase4SpillDifference,pigment::PigmentDebugView::Phase4YTransport,pigment::PigmentDebugView::Phase4ABTransport,pigment::PigmentDebugView::Phase4SourceGradientField}){
     in.params.debugView=debug;pigment::processPigmentPhase4(in);for(float v:dst)check(std::isfinite(v),"Research debug fields finite and valid in every mode");
     if(debug==pigment::PigmentDebugView::Phase4Source)check(dst==src,"Source diagnostic bit exact");
   }
+}
+void sourceOnlyAnalysisCache() {
+  pigment::RectI b{-2,3,14,19};pigment::OwnedYabPlanes source(b);auto v=source.view();
+  for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){v.y.at(x,y)=.03f*x+.02f*y;v.a.at(x,y)=.05f*std::sin(float(x));v.b.at(x,y)=.03f*std::cos(float(y));}
+  pigment::Phase4Params p;p.latentCount=12;p.plateCount=4;
+  pigment::Phase4AnalysisCache cache;
+  auto original=static_cast<const pigment::OwnedYabPlanes&>(source).view();
+  pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
+  auto builds=cache.builds;p.plateScale=96;p.chromaSupportRatio=3;
+  auto reused=pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
+  auto fresh=pigment::buildPhase4AutomaticPlates(original,p,{}, {[]{return false;},pigment::boundedParallelRows,nullptr});
+  check(cache.builds==builds,"Plate scale/support changes reuse frozen source A1/A2/A3 analysis");
+  for(int i=0;i<p.plateCount;++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){auto a=reused.plates.appearance(i),c=fresh.plates.appearance(i);
+    check(a.y.at(x,y)==c.y.at(x,y) && a.a.at(x,y)==c.a.at(x,y) && a.b.at(x,y)==c.b.at(x,y),"Cached/fresh public appearance bit exact");
+    check(reused.plates.alpha(i).at(x,y)==fresh.plates.alpha(i).at(x,y) && reused.plates.supportY(i).at(x,y)==fresh.plates.supportY(i).at(x,y) && reused.plates.supportAB(i).at(x,y)==fresh.plates.supportAB(i).at(x,y),"Cached/fresh alpha and independent supports bit exact");}
+  v.y.at(b.x1,b.y1)+=.1f;pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
+  check(cache.builds==builds+1,"Source change invalidates frozen source analysis cache");
 }
 } // namespace
 int main() {
@@ -616,6 +660,7 @@ int main() {
   barrierAblationSemantics();
   renderIdentityAndAlpha();
   researchRepresentationsAndCache();
+  sourceOnlyAnalysisCache();
   if (failures)
     return 1;
   std::cout << "All Phase 4 CPU tests passed (photographic gates are evaluated separately)\n";

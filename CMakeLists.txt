@@ -108,6 +108,10 @@ if(APPLE AND PIGMENT_ENABLE_METAL)
       COMMAND pigment_metal_harness --verify --warmups 0 --rounds 1)
     set_tests_properties(pigment_metal_smoke PROPERTIES
       ENVIRONMENT "PIGMENT_METAL_RESOURCE_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+    add_executable(pigment_phase4_metal_tests tests/Phase4MetalTests.cpp)
+    target_link_libraries(pigment_phase4_metal_tests PRIVATE pigment_metal pigment_core)
+    add_test(NAME pigment_phase4_metal_tests COMMAND pigment_phase4_metal_tests)
+    set_tests_properties(pigment_phase4_metal_tests PROPERTIES ENVIRONMENT "PIGMENT_METAL_RESOURCE_DIR=${CMAKE_CURRENT_BINARY_DIR}")
   endif()
 endif()
 

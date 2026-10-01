@@ -1,5 +1,7 @@
 # Pigment artist interface
 
+Current host/backend status: [Phase4MetalInteractiveMilestone.md](Phase4MetalInteractiveMilestone.md). Nuke licensing is available and actual-host macro/interface tests pass. Auto now accelerates Linear/Density appearance interaction with Metal; Spectral and historical field construction stay CPU. Earlier license-blocked verification below is historical.
+
 An opt-in image-making interface over the current Phase-4 CPU implementation. Pigment uses C1 bounded Poisson, not a new algorithm. Gate C remains photographically unaccepted. No pigment chemistry or change to frozen A1/A2/A3/B algorithms is introduced.
 
 Choose **Interface → Pigment** for compact controls or **Research / Compare** for representations, stage diagnostics and lower-level controls. Existing Comparisons remains the interface default and Representative remains the comparison default. Saved parameter IDs and indices are preserved.

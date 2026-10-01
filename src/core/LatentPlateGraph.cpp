@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <cstring>
 
 namespace pigment {
 namespace {
@@ -959,9 +960,24 @@ float sampleField(const float *field, const AnalysisImage &i, float x,
 
 } // namespace
 
+struct Phase4AnalysisCacheData {
+  AnalysisImage analysis;
+  SparseAffinityGraph graph;
+  SpectralMattingBasis exactBasis;
+  SpectralBasis basis;
+  ComponentRecovery recovery;
+  std::vector<Sample> latentMean;
+  std::vector<float> latentMass,latentVariance;
+  std::vector<std::vector<Sample>> appearance;
+  Phase4AppearanceDistributionGrid distributions;
+  Phase4GateDiagnostics diagnostics;
+  std::unique_ptr<LatentComponentSet> fullLatent;
+};
+
 Phase4AutomaticResult buildPhase4AutomaticPlates(
     ConstYabPlanes source, const Phase4Params &inputParams,
-    const ImageGeometry &geometry, const ExecutionContext &execution) {
+    const ImageGeometry &geometry, const ExecutionContext &execution,
+    Phase4AnalysisCache* cache) {
   Phase4Params params = inputParams;
   params.latentCount =
       std::max(12, std::min(kPhase4LatentCapacity, params.latentCount));
@@ -972,19 +988,31 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   // Frozen A1/A2 checkpoint: use the raw deterministic analysis image for the
   // matting eigenspace.  The analysis graph still stores distinct signed
   // W_CMF and non-negative F semantics for downstream support and spill.
-  AnalysisImage analysis = downsample(source);
-  result.analysisGraph = buildGraph(analysis, params, geometry);
+  uint64_t hash=1469598103934665603ull;
+  for(auto field:{source.y,source.a,source.b})for(int y=field.bounds.y1;y<field.bounds.y2;++y)for(int x=field.bounds.x1;x<field.bounds.x2;++x){uint32_t bits;float value=field.at(x,y);std::memcpy(&bits,&value,4);hash^=bits;hash*=1099511628211ull;}
+  const auto bounds=source.y.bounds;
+  std::vector<double> sourceKey{double(hash>>32),double(uint32_t(hash)),double(bounds.x1),double(bounds.y1),double(bounds.x2),double(bounds.y2),geometry.pixelAspect,geometry.renderScaleX,geometry.renderScaleY,double(params.latentCount),params.plateOverlap};
+  const bool reuse=cache && cache->data && cache->key==sourceKey;
+  // On reuse all retained source data are read-only; only result full-res
+  // appearances are refined below. Avoid copying the entire latent vocabulary.
+  auto state=reuse?cache->data:std::make_shared<Phase4AnalysisCacheData>();
+  if(!reuse){state->analysis=downsample(source);state->graph=buildGraph(state->analysis,params,geometry);}
+  auto& analysis=state->analysis;result.analysisGraph=state->graph;
   const int n = result.analysisGraph.nodeCount();
+  auto& exactBasis=state->exactBasis;auto& basis=state->basis;
+  auto& recovery=state->recovery;auto& latentMean=state->latentMean;
+  auto& latentMass=state->latentMass;auto& latentVariance=state->latentVariance;
+  auto& appearance=state->appearance;
+  if(!reuse){
   std::vector<YabPixel> spectralInput;
   spectralInput.reserve(analysis.pixels.size());
   for (const auto &value : analysis.pixels)
     spectralInput.push_back({value.y, value.a, value.b});
-  auto exactBasis = buildSpectralMattingBasis(
+  exactBasis = buildSpectralMattingBasis(
       spectralInput, analysis.width, analysis.height,
       std::min(32, params.latentCount + 8), execution, nullptr, 0.0f);
   if (exactBasis.count < std::min(32, params.latentCount + 8))
     throw std::runtime_error("Phase 4 spectral eigensolver did not converge");
-  SpectralBasis basis;
   basis.count = exactBasis.count;
   basis.values = exactBasis.values;
   basis.eigenvalues = exactBasis.eigenvalues;
@@ -999,16 +1027,14 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   }
   result.diagnostics.meanEigenResidual /=
       std::max(1, int(basis.eigenResidual.size()));
-  auto recovery =
+  recovery =
       recoverComponents(basis, result.analysisGraph, params.latentCount,
                         params.plateOverlap, result.diagnostics);
   params.latentCount = recovery.count;
   auto &alpha = recovery.values;
   result.latent = LatentComponentSet(source.y.bounds, params.latentCount);
   result.latent.allocateSpectralModes(exactBasis.count);
-  std::vector<Sample> latentMean(params.latentCount);
-  std::vector<float> latentMass(params.latentCount),
-      latentVariance(params.latentCount);
+  latentMean.resize(params.latentCount);latentMass.resize(params.latentCount);latentVariance.resize(params.latentCount);
   for (int c = 0; c < params.latentCount; ++c)
     for (int p = 0; p < n; ++p) {
       float w = alpha[size_t(c) * n + p];
@@ -1025,9 +1051,18 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   for (int c = 0; c < params.latentCount; ++c)
     latentVariance[c] =
         std::max(1e-5f, latentVariance[c] / std::max(kEpsilon, latentMass[c]));
-  auto appearance = buildSpatialAppearances(
+  appearance = buildSpatialAppearances(
       analysis, result.analysisGraph, alpha, latentMean,
       params.latentCount, result.diagnostics, result.latent.distributions(), execution);
+  state->distributions=result.latent.distributions();state->diagnostics=result.diagnostics;
+  if(execution.cancelled())throw std::runtime_error("Phase 4 source analysis cancelled");
+  if(cache){cache->data=state;cache->key=sourceKey;++cache->builds;}
+  }else{
+    params.latentCount=recovery.count;result.diagnostics=state->diagnostics;
+    result.latent=LatentComponentSet(source.y.bounds,params.latentCount);
+    result.latent.allocateSpectralModes(exactBasis.count);result.latent.distributions()=state->distributions;
+  }
+  auto& alpha=recovery.values;
   auto &assign = result.plates.latentAssignments();
   assign =
       groupLatents(analysis, alpha, latentMean, latentVariance, basis, params);
@@ -1093,7 +1128,8 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   const float sourcePerAnalysis =
       std::max(float(source.y.bounds.width()) / analysis.width,
                float(source.y.bounds.height()) / analysis.height);
-  for (int i = 0; i < params.plateCount; ++i) {
+  execution.parallelRows(0,params.plateCount,[&](int begin,int end){
+  for (int i = begin; i < end; ++i) {
     supportY[i] =
         maxProductSupport(result.analysisGraph, plateAlpha[i].data(),
                           ry / sourcePerAnalysis, params.structureRespect);
@@ -1101,6 +1137,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
         maxProductSupport(result.analysisGraph, plateAlpha[i].data(),
                           rab / sourcePerAnalysis, params.structureRespect);
   }
+  });
   std::vector<float> spectralScale(exactBasis.count, 1.0f);
   for (int mode = 0; mode < exactBasis.count; ++mode) {
     float maximum = 0;
@@ -1110,6 +1147,8 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
     spectralScale[mode] = std::max(1e-8f, maximum);
   }
   RectI b = source.y.bounds;
+  const bool reuseFull=reuse && bool(state->fullLatent);
+  if(reuseFull)result.latent=*state->fullLatent;
   for (int y = b.y1; y < b.y2; ++y)
     for (int x = b.x1; x < b.x2; ++x) {
       float ax = (float(x - b.x1) + .5f) * analysis.width / b.width() - .5f,
@@ -1117,6 +1156,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       Sample original{source.y.at(x, y), source.a.at(x, y), source.b.at(x, y)};
       Sample latentReconstruction{};
       float entropy = 0;
+      if(!reuseFull){
       for (int mode = 0; mode < exactBasis.count; ++mode)
         result.latent.spectralMode(mode).at(x, y) =
             sampleField(exactBasis.values.data() + size_t(mode) * n, analysis,
@@ -1142,6 +1182,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       result.latent.spectralResidual().at(x, y) =
           result.diagnostics.maximumEigenResidual;
       result.latent.recoveryError().at(x, y) = 0;
+      }
       for (int i = 0; i < params.plateCount; ++i) {
         float pa = sampleField(plateAlpha[i], analysis, ax, ay);
         result.plates.alpha(i).at(x, y) = pa;
@@ -1166,6 +1207,7 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
   for(int y=b.y1;y<b.y2;++y) for(int x=b.x1;x<b.x2;++x) {
     if(x==b.x1 && execution.cancelled())
       throw std::runtime_error("Phase 4 full-resolution appearance cancelled");
+    if(!reuseFull){
     double ax=std::clamp((double(x-b.x1)+.5)*analysis.width/b.width()-.5,
                          0.0,double(analysis.width-1));
     double ay=std::clamp((double(y-b.y1)+.5)*analysis.height/b.height()-.5,
@@ -1193,6 +1235,8 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       auto v=result.latent.appearance(c);Eigen::Vector3d d=covariances[size_t(c)]*correction;
       v.y.at(x,y)+=float(d[0]);v.a.at(x,y)+=float(d[1]);v.b.at(x,y)+=float(d[2]);
     }
+    }
+    Eigen::Vector3d original(source.y.at(x,y),source.a.at(x,y),source.b.at(x,y));
     Eigen::Vector3d check=Eigen::Vector3d::Zero();
     for(int i=0;i<params.plateCount;++i) {
       Eigen::Vector3d value=Eigen::Vector3d::Zero();double pa=0;
@@ -1215,6 +1259,10 @@ Phase4AutomaticResult buildPhase4AutomaticPlates(
       std::isfinite(result.diagnostics.meanEffectiveComponents);
   result.diagnostics.appearanceFinite =
       std::isfinite(result.diagnostics.appearanceUnmixingError);
+  if(cache && !state->fullLatent){
+    if(execution.cancelled())throw std::runtime_error("Phase 4 full-resolution cache cancelled");
+    state->fullLatent=std::make_unique<LatentComponentSet>(result.latent);
+  }
   return result;
 }
 

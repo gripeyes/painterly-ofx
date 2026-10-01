@@ -17,7 +17,7 @@ nodes = []
 for value, label in [(1,"C0 A3 Passthrough"),(0,"C1 Bounded Poisson"),(2,"C3 Regional Eigen"),(3,"C4 Sparse Curve"),(4,"C2 Preserved Moments")]:
     node = nuke.createNode(kind, inpanel=False)
     node.setInput(0, small)
-    required = {"phase4Representation", "phase4YSupport", "phase4ABSupport", "phase4SpillReach", "phase4StructureRespect", "pigmentInterface", "pigmentCopyToResearch", "phase4IndependentComplexity", "phase4YComplexity", "phase4ABComplexity", "phase4ColorInteraction", "phase4PigmentDensity"}
+    required = {"phase4Representation", "phase4YSupport", "phase4ABSupport", "phase4SpillReach", "phase4StructureRespect", "pigmentInterface", "pigmentCopyToResearch", "phase4IndependentComplexity", "phase4YComplexity", "phase4ABComplexity", "phase4ColorInteraction", "phase4PigmentDensity", "phase4ComputeBackend"}
     assert required.issubset(node.knobs()), required.difference(node.knobs())
     # Existing-node default comparison is not changed by descriptor additions.
     assert node["comparisonMode"].value() != "Automatic Plate Graph (Phase 4)"
@@ -82,6 +82,10 @@ for y in range(4,128,8):
             sample_error = max(sample_error, abs(nuke.sample(artist_before,channel,x,y)-nuke.sample(artist_after,channel,x,y)))
 assert sample_error == 0, sample_error
 nuke.delete(artist_write)
+artist["pigmentInterface"].setValue(1)
+artist["phase4ColorInteraction"].setValue(0)
+artist["phase4ComputeBackend"].setValue(0)
+artist["label"].setValue("Pigment — Auto hybrid\nGate C remains unaccepted; change Read to test other images")
 nodes.insert(0,artist)
 viewer = nuke.nodes.Viewer(inputs=nodes)
 viewer["label"].setValue("Pigment / C0 / C1 / C3 / C4 / C2 — identical source")

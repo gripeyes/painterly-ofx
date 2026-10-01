@@ -1,5 +1,7 @@
 # Phase 4 research node and repaired Spill reach
 
+**Update:** actual Nuke validation and hybrid Linear/Density Metal work now pass; see [the interactive milestone](Phase4MetalInteractiveMilestone.md). The license-blocked statements below describe the earlier checkpoint, not current host status. Gate C remains unaccepted.
+
 ## Milestone status
 
 The CPU research implementation is built, ad-hoc signed, and installed in the existing `/Library/OFX/Plugins/Pigment.ofx.bundle`. Persistent identity remains `org.painterlyofx.Pigment`; Representative remains the new-node comparison default. A1/A2/A3/B and C0–C4 research baselines are preserved. Gate C is still **not accepted**.

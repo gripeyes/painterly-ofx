@@ -16,6 +16,8 @@
 #include <memory>
 #include <sstream>
 #include <mutex>
+#include <cstdio>
+#include <cstdlib>
 
 namespace pigment::plugin {
 namespace {
@@ -82,6 +84,7 @@ constexpr const char* kPhase4PlateCount = "phase4PlateCount";
 constexpr const char* kPigmentInterface = "pigmentInterface";
 constexpr const char* kPigmentCopy = "pigmentCopyToResearch";
 constexpr const char* kColorInteraction = "phase4ColorInteraction";
+constexpr const char* kPhase4Backend = "phase4ComputeBackend";
 constexpr const char* kPigmentDensity = "phase4PigmentDensity";
 constexpr const char* kIndependentComplexity = "phase4IndependentComplexity";
 constexpr const char* kYComplexity = "phase4YComplexity";
@@ -192,6 +195,7 @@ class PigmentEffect final : public OFX::ImageEffect {
     pigmentInterface_=fetchChoiceParam(kPigmentInterface);
     pigmentCopy_=fetchPushButtonParam(kPigmentCopy);
     colorInteraction_=fetchChoiceParam(kColorInteraction);pigmentDensity_=fetchDoubleParam(kPigmentDensity);
+    phase4Backend_=fetchChoiceParam(kPhase4Backend);
     independentComplexity_=fetchBooleanParam(kIndependentComplexity);
     yComplexity_=fetchDoubleParam(kYComplexity);abComplexity_=fetchDoubleParam(kABComplexity);
     for(int i=0;i<10;++i)artistParams_[i]=fetchDoubleParam(kArtistParams[i]);
@@ -244,6 +248,7 @@ class PigmentEffect final : public OFX::ImageEffect {
   OFX::ChoiceParam* pigmentInterface_=nullptr;
   OFX::PushButtonParam* pigmentCopy_=nullptr;
   OFX::ChoiceParam* colorInteraction_=nullptr;
+  OFX::ChoiceParam* phase4Backend_=nullptr;
   OFX::DoubleParam* pigmentDensity_=nullptr;
   OFX::BooleanParam* independentComplexity_=nullptr;
   OFX::DoubleParam *yComplexity_=nullptr,*abComplexity_=nullptr;
@@ -531,10 +536,30 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
         ofx::toRect(maskImage->getBounds()), maskImage->getPixelComponentCount()};
     Phase4RenderInputs cpu{sourceView, destinationView, ofx::toRect(args.renderWindow), p,
         {source->getPixelAspectRatio(), args.renderScale.x, args.renderScale.y},
-        maskImage ? &maskView : nullptr, &phase4Cache_};
+        maskImage ? &maskView : nullptr, &phase4Cache_, {}, {}};
     std::lock_guard<std::mutex> phase4Lock(phase4Mutex_);
+#ifdef PIGMENT_ENABLE_METAL
+    int backend=0;phase4Backend_->getValueAtTime(args.time,backend);
+    if(backend!=1 && p.phase4.colorInteraction!=ColorInteractionLaw::SpectralPigment){
+      if(!metal_)metal_=std::make_unique<metal::MetalInstance>();
+      if(backend==2)cpu.accelerateTransport=[this,backend](const PublicPlateSet& plates,const SparseAffinityGraph& graph,const Phase4Params& params,Phase4SpillTransport& result){
+        bool ok=metal_->renderPhase4Transport(plates,graph,params,result,{[this]{return abort();},serialRows,nullptr});
+        if(!ok && backend==2)throw std::runtime_error("Phase 4 Metal transport failed; choose CPU Reference to compare");return ok;
+      };
+      cpu.accelerateSpill=[this,backend](ConstYabPlanes original,const PublicPlateSet& plates,
+        const Phase4ChunkSynthesis& synthesis,const SparseAffinityGraph& graph,const Phase4Params& params,
+        const Phase4SpillTransport& transport,WorkingGamut gamut,Phase4SpillResult& result){
+        bool ok=metal_->renderPhase4Spill(original,plates,synthesis,graph,params,transport,gamut,result);
+        if(!ok && backend==2)throw std::runtime_error("Phase 4 Metal Spill failed; choose CPU Reference to compare");
+        return ok;
+      };
+    }
+#endif
     const auto diagnostics = processPigmentPhase4(
-        cpu, {[this] { return abort(); }, serialRows, nullptr});
+        cpu, {[this] { return abort(); }, boundedParallelRows, nullptr});
+    if(std::getenv("PIGMENT_PHASE4_PROFILE"))std::fprintf(stderr,
+      "PHASE4_PROFILE frame=%.3f size=%dx%d origin=%d,%d analysis=%.3f hierarchy=%.3f field=%.3f transport=%.3f interaction=%.3f final=%.3f total=%.3f metal=%d builds=%zu/%zu/%zu/%zu source_builds=%zu\n",
+      args.time,sourceBounds.width(),sourceBounds.height(),sourceBounds.x1,sourceBounds.y1,diagnostics.analysisMs,diagnostics.hierarchyMs,diagnostics.synthesisMs,diagnostics.transportMs,diagnostics.interactionMs,diagnostics.finalMs,diagnostics.totalMs,int(diagnostics.metalSpill),phase4Cache_.automaticBuilds,phase4Cache_.hierarchyBuilds,phase4Cache_.synthesisBuilds,phase4Cache_.transportBuilds,phase4Cache_.sourceAnalysis.builds);
     if(!diagnostics.reconstructionConverged) {
       setPersistentMessage(OFX::Message::eMessageError,"PigmentPhase4Poisson",
                            "Phase 4 bounded reconstruction did not converge to the required tolerance.");
@@ -546,7 +571,10 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
                            "Phase 4 Gate A produced non-finite automatic-plate diagnostics.");
       OFX::throwSuiteStatusException(kOfxStatFailed);
     }
-    clearPersistentMessage();
+    if(diagnostics.metalAttempted && !diagnostics.metalSpill)
+      setPersistentMessage(OFX::Message::eMessageWarning,"PigmentPhase4MetalFallback",
+                           "Phase 4 Auto could not run Metal Spill; using the CPU reference.");
+    else clearPersistentMessage();
     return;
   }
   if (p.comparison == PigmentComparisonMode::SoftPictorialPlates) {
@@ -704,6 +732,9 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   law->appendOption("Linear YAB");law->appendOption("Density");law->appendOption("Spectral Pigment");law->setDefault(0);
   law->setHint("CPU appearance laws on identical directed Spill weights. Spectral uses compact representative reflectance and equal-scattering K–M, not measured pigments. No spatial or display transform.");
   number(d,*interaction,kPigmentDensity,"Pigment Density",0,0,1,1,"Zero preserves scene luminance; one admits nonlinear material-density luminance via Y Spill. AB-only Spill keeps Y fixed. HDR/negative residuals are retained.",OFX::eDoubleTypeScale);
+  auto* phase4Backend=d.defineChoiceParam(kPhase4Backend);phase4Backend->setLabels("Compute Backend","Compute Backend","Compute Backend");phase4Backend->setScriptName(kPhase4Backend);phase4Backend->setParent(*interaction);
+  phase4Backend->appendOption("Auto (Hybrid)");phase4Backend->appendOption("CPU Reference");phase4Backend->appendOption("Metal Spill (Hybrid)");phase4Backend->setDefault(0);
+  phase4Backend->setHint("Hybrid accelerates Linear/Density appearance interaction and alpha reconstruction. Frozen analysis/hierarchy/fields stay CPU. Auto keeps faster cached CPU graph transport; explicit Metal also runs the exact GPU graph solver. Spectral always runs CPU. Auto falls back on failure; explicit Metal reports failure.");
 
   auto* painterly = group(d, "painterlyGroup", "Painterly");
   auto* amount=number(d, *painterly, kAmount, "Amount", 0.7, 0, 1, 1, "Overall integrated processing strength", OFX::eDoubleTypeScale);
