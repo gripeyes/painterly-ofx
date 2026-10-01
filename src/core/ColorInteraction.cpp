@@ -21,7 +21,7 @@ V basis(int i){double t=(i-10)/10.;return {1,t,t*t};}
 double reflectance(double p){return .5+.5*p/std::hypot(1.,p);}
 double safe(double r){return std::clamp(r,1e-6,1.-1e-6);}
 }
-ColorInteraction::ColorInteraction(WorkingGamut gamut):opponent_(gamut){
+ColorInteraction::ColorInteraction(WorkingGamut gamut,bool spectralSceneMass):opponent_(gamut),spectralSceneMass_(spectralSceneMass){
   auto data=opponentMatrixData(gamut);M toXYZ,toRGB;
   for(int i=0;i<9;++i){toXYZ(i/3,i%3)=data.rgbToXyz[i];toRGB(i/3,i%3)=data.xyzToRgb[i];}
   V white=toXYZ*V::Ones();white/=white[1];
@@ -34,15 +34,21 @@ ColorInteraction::ColorInteraction(WorkingGamut gamut):opponent_(gamut){
   // Compensate coarse quadrature's white error, not arbitrary image colors.
   for(int i=0;i<kInteractionSamples;++i){V xyz;
     for(int k=0;k<3;++k)xyz[k]=observer[i][k]*illuminant[i]*(i==0 || i==20?.5:1)*d65[k]/sum[k];
-    V rgb=toRGB*adaptation*xyz;for(int k=0;k<3;++k)integration_[k][i]=rgb[k];}
+    V rgb=toRGB*adaptation*xyz;for(int k=0;k<3;++k){integration_[k][i]=rgb[k];xyzIntegration_[k][i]=(adaptation*xyz)[k];}}
 }
 std::array<double,3> ColorInteraction::integrate(const std::array<double,kInteractionSamples>&r) const {
   std::array<double,3> out{};for(int k=0;k<3;++k)for(int i=0;i<kInteractionSamples;++i)out[k]+=integration_[k][i]*r[i];return out;
 }
-InteractionMaterial ColorInteraction::encode(YabPixel color,ColorInteractionLaw law) const {
+InteractionMaterial ColorInteraction::encode(YabPixel color,ColorInteractionLaw law,SpectralEncodeTrace *trace) const {
   InteractionMaterial out;auto rgb=opponent_.toRgb(color);
+  if(trace){*trace={};for(int k=0;k<3;++k){trace->sceneRGB[k]=rgb[k];trace->negativeResidual[k]=std::min(0.,double(rgb[k]));trace->invalid+=!std::isfinite(rgb[k]);}}
   out.magnitude=std::max({0.,double(rgb[0]),double(rgb[1]),double(rgb[2])})/.9;
   V target=V::Zero();if(out.magnitude>0)for(int k=0;k<3;++k)target[k]=std::max(0.,double(rgb[k]))/out.magnitude;
+  // At zero positive magnitude there is no material contribution. A neutral
+  // canonical material avoids encoding residual-only scene values as black
+  // pigment. The entire signed input remains in the reversible residual.
+  if(spectralSceneMass_ && law==ColorInteractionLaw::SpectralPigment && out.magnitude==0)target=V::Constant(.9);
+  if(trace)for(int k=0;k<3;++k)trace->materialRGB[k]=target[k];
   std::array<double,3> decoded{};
   if(law!=ColorInteractionLaw::SpectralPigment){
     for(int k=0;k<3;++k){decoded[k]=std::max(1e-6,target[k]);out.absorption[k]=-std::log(decoded[k]);}
@@ -50,6 +56,7 @@ InteractionMaterial ColorInteraction::encode(YabPixel color,ColorInteractionLaw 
     // Direct deterministic damped Gauss-Newton fit in the J/H function space.
     // No imported LUT, pigment data, or endpoint gamut clipping.
     double grey=std::clamp(target.mean(),1e-4,1.-1e-4),s=2*grey-1;
+    if(trace)trace->greyClamp=grey!=target.mean();
     V c(s/std::sqrt(1-s*s),0,0);
     auto eval=[&](V v,std::array<double,kInteractionSamples>*samples=nullptr,M*jac=nullptr){
       V value=V::Zero();if(jac)jac->setZero();
@@ -61,41 +68,54 @@ InteractionMaterial ColorInteraction::encode(YabPixel color,ColorInteractionLaw 
     };
     double damping=1e-5;
     for(int iteration=0;iteration<24;++iteration){M jac;V value=eval(c,nullptr,&jac),error=value-target;
+      if(trace)trace->iterations=iteration+1;
       if(error.squaredNorm()<1e-14)break;
       M normal=jac.transpose()*jac+damping*M::Identity();V delta=normal.ldlt().solve(jac.transpose()*error);
       bool accepted=false;
-      for(int step=0;step<8;++step){V next=(c-std::ldexp(1.,-step)*delta).cwiseMax(-100).cwiseMin(100);
-        if((eval(next)-target).squaredNorm()<error.squaredNorm()){c=next;accepted=true;break;}}
+      for(int step=0;step<8;++step){V unbounded=c-std::ldexp(1.,-step)*delta;V next=unbounded.cwiseMax(-100).cwiseMin(100);
+        if(trace)trace->coefficientBound+=(unbounded-next).squaredNorm()>0;
+        if((eval(next)-target).squaredNorm()<error.squaredNorm()){c=next;accepted=true;break;}if(trace)++trace->rejectedSteps;}
       damping=accepted?std::max(1e-10,damping*.5):std::min(1.,damping*10);
     }
     std::array<double,kInteractionSamples> spectrum;V value=eval(c,&spectrum);
     out.fitError=(value-target).norm();for(int k=0;k<3;++k){out.coefficients[k]=c[k];decoded[k]=value[k];}
-    for(int i=0;i<kInteractionSamples;++i){double r=safe(spectrum[i]);out.absorption[i]=(1-r)*(1-r)/(2*r);}
+    for(int i=0;i<kInteractionSamples;++i){double r=safe(spectrum[i]);out.absorption[i]=(1-r)*(1-r)/(2*r);
+      if(trace){trace->reflectance[i]=spectrum[i];trace->safeReflectance[i]=r;trace->ks[i]=out.absorption[i];trace->reflectanceFloor+=r!=spectrum[i];}}
     // Decode the exact bounded numerical spectrum used by K/S.
     for(double &r:spectrum)r=safe(r);decoded=integrate(spectrum);
   }
   for(int k=0;k<3;++k){out.residual[k]=double(rgb[k])-out.magnitude*decoded[k];out.residualMagnitude+=out.residual[k]*out.residual[k];}
-  out.residualMagnitude=std::sqrt(out.residualMagnitude);return out;
+  out.residualMagnitude=std::sqrt(out.residualMagnitude);
+  if(trace)for(int k=0;k<3;++k){trace->decodedRGB[k]=decoded[k];trace->fitResidual[k]=out.residual[k]-trace->negativeResidual[k];}
+  return out;
 }
 YabPixel ColorInteraction::mix(const InteractionMaterial *m,const float *w,int count,
-    YabPixel linear,ColorInteractionLaw law,float density) const {
+    YabPixel linear,ColorInteractionLaw law,float density,SpectralMixTrace *trace) const {
+  if(trace)*trace={};
   double total=0;int occupied=0;for(int j=0;j<count;++j){total+=w[j];occupied+=w[j]>0;}
-  if(law==ColorInteractionLaw::LinearYAB || occupied<=1 || total<=0)return linear;
+  if(law==ColorInteractionLaw::LinearYAB || occupied<=1 || total<=0){if(trace){trace->bypass=1;trace->finalYab=linear;}return linear;}
   double magnitude=0;std::array<double,3> residual{};std::array<double,kInteractionSamples> absorption{},spectrum{};
+  double sceneMass=0;if(spectralSceneMass_ && law==ColorInteractionLaw::SpectralPigment)
+    for(int j=0;j<count;++j)if(w[j]>0)sceneMass+=w[j]*m[j].magnitude;
   for(int j=0;j<count;++j)if(w[j]>0){double t=w[j]/total;magnitude+=t*m[j].magnitude;
     for(int k=0;k<3;++k)residual[k]+=t*m[j].residual[k];
-    int n=law==ColorInteractionLaw::Density?3:kInteractionSamples;for(int i=0;i<n;++i)absorption[i]+=t*m[j].absorption[i];}
+    double materialWeight=t;
+    if(spectralSceneMass_ && law==ColorInteractionLaw::SpectralPigment)materialWeight=sceneMass>0?w[j]*m[j].magnitude/sceneMass:0;
+    int n=law==ColorInteractionLaw::Density?3:kInteractionSamples;for(int i=0;i<n;++i)absorption[i]+=materialWeight*m[j].absorption[i];}
   std::array<double,3> material;
   if(law==ColorInteractionLaw::Density)for(int k=0;k<3;++k)material[k]=std::exp(-absorption[k]);
   else{for(int i=0;i<kInteractionSamples;++i){double k=absorption[i];spectrum[i]=1/(1+k+std::sqrt(k*k+2*k));}material=integrate(spectrum);}
   std::array<float,3> rgb;for(int k=0;k<3;++k)rgb[k]=float(magnitude*material[k]+residual[k]);
+  if(trace){trace->magnitude=magnitude;trace->ks=absorption;trace->reflectance=spectrum;trace->materialRGB=material;trace->residual=residual;
+    for(int k=0;k<3;++k){trace->sceneBeforeResidual[k]=magnitude*material[k];trace->nonlinearRGB[k]=rgb[k];trace->invalid+=!std::isfinite(rgb[k]);for(int i=0;i<kInteractionSamples;++i)trace->xyz[k]+=xyzIntegration_[k][i]*spectrum[i];}}
   auto nonlinear=opponent_.toYab(rgb);float d=std::isfinite(density)?std::clamp(density,0.f,1.f):0.f;
+  if(trace){trace->nonlinearYab=nonlinear;trace->densityClamp=d!=density;}
   float targetY=d==0?linear.y:linear.y+d*(nonlinear.y-linear.y);
   // Add/remove neutral scene light; do not divide by signed scene luminance.
   // Negative residuals may cancel material Y. Scaling by that near-zero sum
   // caused chroma spikes in the initial diagnostic. Neutral light changes Y
   // alone in this opponent space and leaves all RGB residuals unscaled.
-  nonlinear.y=targetY;return nonlinear;
+  nonlinear.y=targetY;if(trace)trace->finalYab=nonlinear;return nonlinear;
 }
 std::array<double,3> ColorInteraction::reconstruct(const InteractionMaterial&m,ColorInteractionLaw law) const {
   std::array<double,3> material{};

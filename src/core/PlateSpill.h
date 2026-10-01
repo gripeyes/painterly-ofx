@@ -19,6 +19,16 @@ struct Phase4SpillResult {
   explicit Phase4SpillResult(RectI boundsIn)
       : bounds(boundsIn), composite(boundsIn) {}
 };
+struct SpectralSpillSample {
+  int x=0,y=0,receiver=0;
+  InteractionMaterial material;
+  SpectralEncodeTrace encode;
+  SpectralMixTrace yMix,abMix;
+  std::array<float,kPhase4PlateCapacity> weightsY{},weightsAB{};
+  YabPixel output{};
+  float alpha=0;
+};
+using SpectralSpillObserver=std::function<void(const SpectralSpillSample&)>;
 
 Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
                                    const PublicPlateSet &plates,
@@ -27,6 +37,8 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
                                    const Phase4Params &params,
                                    const ExecutionContext &execution = {},
                                    const Phase4SpillTransport *prepared=nullptr,
-                                   WorkingGamut gamut=WorkingGamut::ACEScg);
+                                   WorkingGamut gamut=WorkingGamut::ACEScg,
+                                   const SpectralSpillObserver &observer={},
+                                   bool spectralSceneMass=false);
 
 } // namespace pigment

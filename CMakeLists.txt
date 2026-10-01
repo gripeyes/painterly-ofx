@@ -163,9 +163,13 @@ if(BUILD_TESTING)
 
   add_executable(pigment_phase4_gate tests/Phase4GateHarness.cpp)
   add_executable(pigment_layered_broad_tests tests/LayeredBroadFieldsTests.cpp)
+  add_executable(pigment_spectral_continuity tests/SpectralContinuityHarness.cpp)
+  target_link_libraries(pigment_spectral_continuity PRIVATE pigment_core)
   target_link_libraries(pigment_layered_broad_tests PRIVATE pigment_core)
   add_test(NAME pigment_layered_broad_tests COMMAND pigment_layered_broad_tests)
   target_link_libraries(pigment_phase4_gate PRIVATE pigment_core)
+  find_package(ZLIB REQUIRED)
+  target_link_libraries(pigment_phase4_gate PRIVATE ZLIB::ZLIB)
 
   add_executable(pigment_backend_benchmark tests/BackendBenchmark.cpp)
   target_link_libraries(pigment_backend_benchmark PRIVATE pigment_core)

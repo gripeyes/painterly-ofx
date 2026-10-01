@@ -206,6 +206,7 @@ void writeComponentDiagnostics(
 #include "Phase4LayeredBroadHarness.h"
 #include "Phase4ReachComparison.h"
 #include "Phase4ColorComparison.h"
+#include "Phase4SpectralDiagnosis.h"
 
 int main(int argc, char **argv) {
   try {
@@ -260,7 +261,9 @@ int main(int argc, char **argv) {
     }
     bool repairedReach=std::string(argv[argc-1])=="--repaired-spill-comparison";
     bool materialOnly=std::string(argv[argc-1])=="--color-material-diagnostics";
-    bool colorCompare=std::string(argv[argc-1])=="--color-interaction-comparison" || materialOnly;
+    bool massCandidate=std::string(argv[argc-1])=="--spectral-mass-comparison";
+    bool spectralDiagnostic=std::string(argv[argc-1])=="--spectral-diagnosis" || massCandidate;
+    bool colorCompare=std::string(argv[argc-1])=="--color-interaction-comparison" || materialOnly || spectralDiagnostic;
     bool layered=std::string(argv[argc-1])=="--layered-broad-comparison";
     bool comparative=std::string(argv[argc-1])=="--comparative-pipeline" || repairedReach || colorCompare || layered;
     if(comparative && !colorCompare && !std::filesystem::exists(outputDir/"source.ppm"))std::filesystem::copy_file(argv[1],outputDir/"source.ppm");
@@ -362,6 +365,7 @@ int main(int argc, char **argv) {
     }
     }
     if(layered){research::layeredComparison(outputDir,constant,hierarchy,transform);return 0;}
+    if(spectralDiagnostic){research::spectralDiagnosis(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform,massCandidate);return 0;}
     if(colorCompare){research::colorComparison(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform,materialOnly);return 0;}
     if(repairedReach){research::repairedReachComparison(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform);return 0;}
     if(comparative){if(!cached)research::saveSnapshot(cachePath,cacheKey,constant,hierarchy);

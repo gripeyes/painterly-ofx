@@ -74,13 +74,13 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
                                    const Phase4ChunkSynthesis &synthesis,
                                    const SparseAffinityGraph &graph,
                                    const Phase4Params &params,
-                                   const ExecutionContext &execution,const Phase4SpillTransport *prepared,WorkingGamut gamut) {
+                                   const ExecutionContext &execution,const Phase4SpillTransport *prepared,WorkingGamut gamut,const SpectralSpillObserver &observer,bool spectralSceneMass) {
   Phase4SpillResult result(plates.bounds());
   const RectI bounds = plates.bounds();
   const int width = bounds.width(), height = bounds.height();
   const int plateCount = plates.count();
   std::optional<ColorInteraction> color;
-  if(params.colorInteraction!=ColorInteractionLaw::LinearYAB)color.emplace(gamut);
+  if(params.colorInteraction!=ColorInteractionLaw::LinearYAB)color.emplace(gamut,spectralSceneMass);
   result.plateAppearance.reserve(plateCount);
   result.influence.reserve(plateCount);
   for (int plate = 0; plate < plateCount; ++plate) {
@@ -112,13 +112,16 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
     float gain=graphValue(ab?transportAB[size_t(plate)]:transportY[size_t(plate)],x,y)-support.at(sx,sy);
     return std::min(1.f,intrinsic+std::max(0.f,gain));
   };
+  // Diagnostic storage is initialized once, not per pixel on the default path.
+  std::array<SpectralEncodeTrace,kPhase4PlateCapacity> encodeTraces;
+  SpectralMixTrace yTrace,abTrace;
   for (int y = bounds.y1; y < bounds.y2; ++y) {
     if(execution.cancelled())throw std::runtime_error("Spill reconstruction cancelled");
     for (int x = bounds.x1; x < bounds.x2; ++x) {
       std::array<InteractionMaterial,kPhase4PlateCapacity> materials;
       if(color && params.spillAmount>0 && (params.lumaSpill>0 || params.chromaSpill>0))
         for(int i=0;i<plateCount;++i){auto v=synthesis.plateAppearance[size_t(i)].view();const auto &c=params.plates[size_t(i)];
-          materials[size_t(i)]=color->encode({v.y.at(x,y)+c.tone,v.a.at(x,y)+c.biasA,v.b.at(x,y)+c.biasB},params.colorInteraction);}
+          materials[size_t(i)]=color->encode({v.y.at(x,y)+c.tone,v.a.at(x,y)+c.biasA,v.b.at(x,y)+c.biasB},params.colorInteraction,observer?&encodeTraces[size_t(i)]:nullptr);}
       std::vector<float> artisticAlpha(static_cast<size_t>(plateCount));
       float alphaSum = 0.0f;
       for (int plate = 0; plate < plateCount; ++plate) {
@@ -198,6 +201,7 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
           }
         }
         auto output = result.plateAppearance[size_t(receiver)].view();
+        if(observer){yTrace={};abTrace={};yTrace.bypass=abTrace.bypass=1;yTrace.finalYab=abTrace.finalYab={baseY,baseA,baseB};}
         output.y.at(x, y) = sumY / weightY;
         output.a.at(x, y) = sumA / weightAB;
         output.b.at(x, y) = sumB / weightAB;
@@ -205,12 +209,15 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
           // Spatial interaction weights and all diagnostics above are exactly
           // the historical path. Only this appearance decode is law-specific.
           if(weightY>1){auto v=color->mix(materials.data(),weightsY.data(),plateCount,
-              {sumY/weightY,0,0},params.colorInteraction,params.pigmentDensity);output.y.at(x,y)=v.y;}
+              {sumY/weightY,0,0},params.colorInteraction,params.pigmentDensity,observer?&yTrace:nullptr);output.y.at(x,y)=v.y;}
           if(weightAB>1){float ly=baseY;for(int i=0;i<plateCount;++i)if(i!=receiver){auto d=synthesis.plateAppearance[size_t(i)].view();ly+=weightsAB[size_t(i)]*(d.y.at(x,y)+params.plates[size_t(i)].tone);}
             auto v=color->mix(materials.data(),weightsAB.data(),plateCount,
-              {ly/weightAB,sumA/weightAB,sumB/weightAB},params.colorInteraction,params.pigmentDensity);
+              {ly/weightAB,sumA/weightAB,sumB/weightAB},params.colorInteraction,params.pigmentDensity,observer?&abTrace:nullptr);
             output.a.at(x,y)=v.a;output.b.at(x,y)=v.b;}
         }
+        if(observer && color && params.spillAmount>0){SpectralSpillSample sample;sample.x=x;sample.y=y;sample.receiver=receiver;
+          sample.material=materials[size_t(receiver)];sample.encode=encodeTraces[size_t(receiver)];sample.yMix=yTrace;sample.abMix=abTrace;
+          sample.weightsY=weightsY;sample.weightsAB=weightsAB;sample.output={output.y.at(x,y),output.a.at(x,y),output.b.at(x,y)};sample.alpha=artisticAlpha[size_t(receiver)];observer(sample);}
         result.influence[size_t(receiver)].view().at(x, y) = influence;
         result.influenceY[size_t(receiver)].view().at(x,y)=influenceY;
       }
