@@ -81,6 +81,8 @@ constexpr const char* kComputeBackend = "phase33ComputeBackend";
 constexpr const char* kPhase4PlateCount = "phase4PlateCount";
 constexpr const char* kPigmentInterface = "pigmentInterface";
 constexpr const char* kPigmentCopy = "pigmentCopyToResearch";
+constexpr const char* kColorInteraction = "phase4ColorInteraction";
+constexpr const char* kPigmentDensity = "phase4PigmentDensity";
 constexpr const char* kIndependentComplexity = "phase4IndependentComplexity";
 constexpr const char* kYComplexity = "phase4YComplexity";
 constexpr const char* kABComplexity = "phase4ABComplexity";
@@ -189,6 +191,7 @@ class PigmentEffect final : public OFX::ImageEffect {
     phase4PlateCount_ = fetchIntParam(kPhase4PlateCount);
     pigmentInterface_=fetchChoiceParam(kPigmentInterface);
     pigmentCopy_=fetchPushButtonParam(kPigmentCopy);
+    colorInteraction_=fetchChoiceParam(kColorInteraction);pigmentDensity_=fetchDoubleParam(kPigmentDensity);
     independentComplexity_=fetchBooleanParam(kIndependentComplexity);
     yComplexity_=fetchDoubleParam(kYComplexity);abComplexity_=fetchDoubleParam(kABComplexity);
     for(int i=0;i<10;++i)artistParams_[i]=fetchDoubleParam(kArtistParams[i]);
@@ -240,6 +243,8 @@ class PigmentEffect final : public OFX::ImageEffect {
   void updateInterface(double time);
   OFX::ChoiceParam* pigmentInterface_=nullptr;
   OFX::PushButtonParam* pigmentCopy_=nullptr;
+  OFX::ChoiceParam* colorInteraction_=nullptr;
+  OFX::DoubleParam* pigmentDensity_=nullptr;
   OFX::BooleanParam* independentComplexity_=nullptr;
   OFX::DoubleParam *yComplexity_=nullptr,*abComplexity_=nullptr;
   std::array<OFX::DoubleParam*,10> artistParams_{};
@@ -357,6 +362,9 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   p.phase4.plateCount = std::max(4, std::min(8, phase4PlateCount_->getValueAtTime(time)));
   phase4Representation_->getValueAtTime(time,value);
   p.phase4.representation=static_cast<Phase4Representation>(std::max(0,std::min(4,value)));
+  colorInteraction_->getValueAtTime(time,value);
+  p.phase4.colorInteraction=static_cast<ColorInteractionLaw>(std::clamp(value,0,2));
+  p.phase4.pigmentDensity=float(pigmentDensity_->getValueAtTime(time));
   p.phase4.ySupport=float(phase4YSupport_->getValueAtTime(time));
   p.phase4.abSupport=float(phase4ABSupport_->getValueAtTime(time));
   p.phase4.latentCount = std::max(12, std::min(24, phase4LatentCount_->getValueAtTime(time)));
@@ -410,6 +418,8 @@ void PigmentEffect::updateInterface(double time){
   pigmentCopy_->setIsSecret(mode!=1);pigmentCopy_->setEnabled(mode==1);
   for(const char* group:{"painterlyGroup","structureGroup","spatialGroup","detailGroup","chromaGroup","pictorialPlanesGroup","pictorialInformationGroup","pictorialTransitionsGroup","phase33Group"})fetchGroupParam(group)->setIsSecret(mode!=0);
   fetchGroupParam("phase4Group")->setIsSecret(mode==1 || (mode==0 && comparison!=6));
+  fetchGroupParam("colorInteractionGroup")->setIsSecret(mode==0 && comparison!=6);
+  int law=0;colorInteraction_->getValueAtTime(time,law);pigmentDensity_->setEnabled(law!=0);
   fetchGroupParam("advancedGroup")->setIsSecret(mode==1);
   comparison_->setIsSecret(mode!=0);comparison_->setEnabled(mode==0);
   for(auto* p:{regionSoftness_,modeSelectivity_,boundaryScale_,veilTonalBias_,chromaLumaCoupling_})p->setIsSecret(mode!=0);
@@ -438,7 +448,7 @@ void PigmentEffect::changedParam(const OFX::InstanceChangedArgs& args,const std:
       endEditBlock();
     }catch(...){endEditBlock();throw;}
   }
-  if(name==kPigmentInterface || name==kComparison || name==kPigmentCopy || name==kIndependentComplexity || name==kPhase4Representation)updateInterface(args.time);
+  if(name==kPigmentInterface || name==kComparison || name==kPigmentCopy || name==kIndependentComplexity || name==kPhase4Representation || name==kColorInteraction)updateInterface(args.time);
 }
 
 bool PigmentEffect::isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& clip,
@@ -689,6 +699,11 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
     "Zero symmetrizes interaction; one retains directed donor/receiver transport"};
   for(int i=0;i<10;++i){bool physical=i==0 || i==8;auto* parameter=number(d,*artist,kArtistParams[i],artistLabels[i],artistDefaults[i],i==0?4:0,physical?256:1,physical?128:1,artistHints[i],physical?OFX::eDoubleTypePlain:OFX::eDoubleTypeScale);parameter->setIsSecret(true);}
   auto* copy=d.definePushButtonParam(kPigmentCopy);copy->setLabels("Copy to Research","Copy to Research","Copy to Research");copy->setScriptName(kPigmentCopy);copy->setParent(*artist);copy->setIsSecret(true);copy->setHint("Copy this frame's evaluated Pigment mapping into Research controls and switch interfaces without changing the image. Existing research values are replaced only by this explicit action.");
+  auto* interaction=group(d,"colorInteractionGroup","Color Interaction — Experimental",false);interaction->setIsSecret(true);
+  auto* law=d.defineChoiceParam(kColorInteraction);law->setLabels("Color Interaction","Color Interaction","Color Interaction");law->setScriptName(kColorInteraction);law->setParent(*interaction);
+  law->appendOption("Linear YAB");law->appendOption("Density");law->appendOption("Spectral Pigment");law->setDefault(0);
+  law->setHint("CPU appearance laws on identical directed Spill weights. Spectral uses compact representative reflectance and equal-scattering K–M, not measured pigments. No spatial or display transform.");
+  number(d,*interaction,kPigmentDensity,"Pigment Density",0,0,1,1,"Zero preserves scene luminance; one admits nonlinear material-density luminance via Y Spill. AB-only Spill keeps Y fixed. HDR/negative residuals are retained.",OFX::eDoubleTypeScale);
 
   auto* painterly = group(d, "painterlyGroup", "Painterly");
   auto* amount=number(d, *painterly, kAmount, "Amount", 0.7, 0, 1, 1, "Overall integrated processing strength", OFX::eDoubleTypeScale);

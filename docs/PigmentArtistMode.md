@@ -36,6 +36,8 @@ Plain interface switching does **not** overwrite prior Research settings and may
 
 Research retains source, public reconstruction, alpha, separate supports, chunks, contours, pre/post-Spill, difference, influence and transport views. Pigment shows Final. The common Output group exposes Amount, Mix, Working Gamut and Invert Mask.
 
+An isolated **Color Interaction — Experimental** group is available in both interfaces: Linear YAB (unchanged default), Density, Spectral Pigment and Pigment Density. Macros and Copy to Research retain these selections without changing transport. These are CPU comparisons, not spectral-chemistry certification; see `Phase4ColorInteractionDesign.md` and `Phase4ColorInteractionResults.md`.
+
 ## Verification
 
 All 11 regression suites pass after a complete rebuild. Tests cover coordinated scaling, zero organization, support/chunk independence, structure mapping, bounds, retained expert settings, bit-exact shared-Complexity compatibility and independent Y/AB fields. These checks do not certify photographic acceptance. The installed arm64 bundle at `/Library/OFX/Plugins/Pigment.ofx.bundle` has a verified signature and a module hash matching the signed build.

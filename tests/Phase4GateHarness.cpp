@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -202,6 +203,7 @@ void writeComponentDiagnostics(
 } // namespace
 #include "Phase4ComparativePipeline.h"
 #include "Phase4ReachComparison.h"
+#include "Phase4ColorComparison.h"
 
 int main(int argc, char **argv) {
   try {
@@ -255,11 +257,14 @@ int main(int argc, char **argv) {
           argc > 15 ? std::stof(argv[15]) : 1.0f;
     }
     bool repairedReach=std::string(argv[argc-1])=="--repaired-spill-comparison";
-    bool comparative=std::string(argv[argc-1])=="--comparative-pipeline" || repairedReach;
-    if(comparative && !std::filesystem::exists(outputDir/"source.ppm"))std::filesystem::copy_file(argv[1],outputDir/"source.ppm");
+    bool materialOnly=std::string(argv[argc-1])=="--color-material-diagnostics";
+    bool colorCompare=std::string(argv[argc-1])=="--color-interaction-comparison" || materialOnly;
+    bool comparative=std::string(argv[argc-1])=="--comparative-pipeline" || repairedReach || colorCompare;
+    if(comparative && !colorCompare && !std::filesystem::exists(outputDir/"source.ppm"))std::filesystem::copy_file(argv[1],outputDir/"source.ppm");
     auto cachePath=outputDir/"shared-upstream.snapshot";
     auto cacheKey=research::key(static_cast<const pigment::OwnedYabPlanes&>(yab).view(),params);
     bool cached=comparative && std::filesystem::exists(cachePath);
+    if(colorCompare && !cached)throw std::runtime_error("Color comparison requires a frozen upstream snapshot");
     pigment::Phase4AutomaticResult result(bounds,params.latentCount,params.plateCount);
     pigment::Phase4RegionHierarchy hierarchy;
     if(cached)research::loadSnapshot(cachePath,cacheKey,result,hierarchy);
@@ -353,6 +358,7 @@ int main(int argc, char **argv) {
                plateHierarchy.abRetainedBoundaries.view());
     }
     }
+    if(colorCompare){research::colorComparison(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform,materialOnly);return 0;}
     if(repairedReach){research::repairedReachComparison(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform);return 0;}
     if(comparative){if(!cached)research::saveSnapshot(cachePath,cacheKey,constant,hierarchy);
       research::comparePipeline(outputDir,std::filesystem::path(argv[1]).stem().string(),static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,hierarchy,params,transform);

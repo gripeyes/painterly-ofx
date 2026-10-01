@@ -26,6 +26,7 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
                                    const SparseAffinityGraph &graph,
                                    const Phase4Params &params,
                                    const ExecutionContext &execution = {},
-                                   const Phase4SpillTransport *prepared=nullptr);
+                                   const Phase4SpillTransport *prepared=nullptr,
+                                   WorkingGamut gamut=WorkingGamut::ACEScg);
 
 } // namespace pigment

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -71,11 +72,13 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
                                    const Phase4ChunkSynthesis &synthesis,
                                    const SparseAffinityGraph &graph,
                                    const Phase4Params &params,
-                                   const ExecutionContext &execution,const Phase4SpillTransport *prepared) {
+                                   const ExecutionContext &execution,const Phase4SpillTransport *prepared,WorkingGamut gamut) {
   Phase4SpillResult result(plates.bounds());
   const RectI bounds = plates.bounds();
   const int width = bounds.width(), height = bounds.height();
   const int plateCount = plates.count();
+  std::optional<ColorInteraction> color;
+  if(params.colorInteraction!=ColorInteractionLaw::LinearYAB)color.emplace(gamut);
   result.plateAppearance.reserve(plateCount);
   result.influence.reserve(plateCount);
   for (int plate = 0; plate < plateCount; ++plate) {
@@ -110,6 +113,10 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
   for (int y = bounds.y1; y < bounds.y2; ++y) {
     if(execution.cancelled())throw std::runtime_error("Spill reconstruction cancelled");
     for (int x = bounds.x1; x < bounds.x2; ++x) {
+      std::array<InteractionMaterial,kPhase4PlateCapacity> materials;
+      if(color && params.spillAmount>0 && (params.lumaSpill>0 || params.chromaSpill>0))
+        for(int i=0;i<plateCount;++i){auto v=synthesis.plateAppearance[size_t(i)].view();const auto &c=params.plates[size_t(i)];
+          materials[size_t(i)]=color->encode({v.y.at(x,y)+c.tone,v.a.at(x,y)+c.biasA,v.b.at(x,y)+c.biasB},params.colorInteraction);}
       std::vector<float> artisticAlpha(static_cast<size_t>(plateCount));
       float alphaSum = 0.0f;
       for (int plate = 0; plate < plateCount; ++plate) {
@@ -133,6 +140,8 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
         float sumY = baseY, sumA = baseA, sumB = baseB;
         float weightY = 1.0f, weightAB = 1.0f, influence = 0.0f;
         float influenceY=0;
+        std::array<float,kPhase4PlateCapacity> weightsY{},weightsAB{};
+        weightsY[size_t(receiver)]=weightsAB[size_t(receiver)]=1;
         result.transportY[size_t(receiver)].view().at(x,y)=fullTransport(receiver,false,x,y);
         result.transportAB[size_t(receiver)].view().at(x,y)=fullTransport(receiver,true,x,y);
         if (receiverControl.enabled && params.spillAmount > 0.0f) {
@@ -176,6 +185,7 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
             float donorB = donorAppearance.b.at(x, y) + donorControl.biasB;
             float ky = params.spillAmount * params.lumaSpill * interactionY;
             float kab = params.spillAmount * params.chromaSpill * interactionAB;
+            weightsY[size_t(donor)]=ky;weightsAB[size_t(donor)]=kab;
             sumY += ky * donorY;
             weightY += ky;
             sumA += kab * donorA;
@@ -189,6 +199,16 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
         output.y.at(x, y) = sumY / weightY;
         output.a.at(x, y) = sumA / weightAB;
         output.b.at(x, y) = sumB / weightAB;
+        if(color){
+          // Spatial interaction weights and all diagnostics above are exactly
+          // the historical path. Only this appearance decode is law-specific.
+          if(weightY>1){auto v=color->mix(materials.data(),weightsY.data(),plateCount,
+              {sumY/weightY,0,0},params.colorInteraction,params.pigmentDensity);output.y.at(x,y)=v.y;}
+          if(weightAB>1){float ly=baseY;for(int i=0;i<plateCount;++i)if(i!=receiver){auto d=synthesis.plateAppearance[size_t(i)].view();ly+=weightsAB[size_t(i)]*(d.y.at(x,y)+params.plates[size_t(i)].tone);}
+            auto v=color->mix(materials.data(),weightsAB.data(),plateCount,
+              {ly/weightAB,sumA/weightAB,sumB/weightAB},params.colorInteraction,params.pigmentDensity);
+            output.a.at(x,y)=v.a;output.b.at(x,y)=v.b;}
+        }
         result.influence[size_t(receiver)].view().at(x, y) = influence;
         result.influenceY[size_t(receiver)].view().at(x,y)=influenceY;
       }

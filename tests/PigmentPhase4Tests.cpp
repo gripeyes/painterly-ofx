@@ -594,6 +594,11 @@ void researchRepresentationsAndCache() {
   in.params.phase4.spillAmount=.8;in.params.phase4.lumaSpill=0;in.params.phase4.spillReach=128;in.params.phase4.plates[0].biasA=.03;
   pigment::processPigmentPhase4(in);
   check(cache.automaticBuilds==abuilds && cache.hierarchyBuilds==hbuilds && cache.synthesisBuilds==sbuilds,"Creative/Spill controls reuse frozen upstream and selected synthesis");
+  for(auto law:{pigment::ColorInteractionLaw::Density,pigment::ColorInteractionLaw::SpectralPigment}){
+    in.params.phase4.colorInteraction=law;in.params.phase4.pigmentDensity=.5f;
+    pigment::processPigmentPhase4(in);
+    check(cache.automaticBuilds==abuilds && cache.hierarchyBuilds==hbuilds && cache.synthesisBuilds==sbuilds,"Color law and density reuse frozen A1-B and Gate-C fields");
+  }
   for(int i=0;i<256;++i)check(dst[4*i+3]==src[4*i+3],"Research representations preserve alpha");
   for(auto debug:{pigment::PigmentDebugView::Phase4Source,pigment::PigmentDebugView::Phase4PublicReconstruction,pigment::PigmentDebugView::Phase4PreSpill,pigment::PigmentDebugView::Phase4SpillDifference,pigment::PigmentDebugView::Phase4YTransport,pigment::PigmentDebugView::Phase4ABTransport,pigment::PigmentDebugView::Phase4SourceGradientField}){
     in.params.debugView=debug;pigment::processPigmentPhase4(in);for(float v:dst)check(std::isfinite(v),"Research debug fields finite and valid in every mode");

@@ -122,7 +122,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
       if(!solver.converged) return {automatic.diagnostics, false};
   auto spill = applyPhase4Spill(static_cast<const OwnedYabPlanes &>(original).view(),
                                 plates, synthesis,
-                                automatic.analysisGraph, p.phase4, execution);
+                                automatic.analysisGraph, p.phase4, execution,nullptr,p.gamut);
   std::optional<Phase4SpillResult> artisticPreSpill;
   if (p.debugView == PigmentDebugView::Phase4PreSpill || p.debugView == PigmentDebugView::Phase4SpillDifference) {
     auto noSpill = p.phase4;
@@ -130,7 +130,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
     artisticPreSpill.emplace(applyPhase4Spill(
         static_cast<const OwnedYabPlanes &>(original).view(),
         plates, synthesis, automatic.analysisGraph, noSpill,
-        execution));
+        execution,nullptr,p.gamut));
   }
   const int plateCount = automatic.plates.count(),
             latentCount = automatic.latent.count();

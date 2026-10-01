@@ -59,6 +59,7 @@ add_library(pigment_core STATIC
   src/core/RegionalEigenField.cpp
   src/core/SparseTransitionField.cpp
   src/core/PlateSpill.cpp
+  src/core/ColorInteraction.cpp
   src/core/PigmentPhase4.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
@@ -150,6 +151,9 @@ if(BUILD_TESTING)
   add_executable(pigment_spill_diagnostics_tests tests/Phase4SpillDiagnosticsTests.cpp)
   target_link_libraries(pigment_spill_diagnostics_tests PRIVATE pigment_core)
   add_test(NAME pigment_spill_diagnostics_tests COMMAND pigment_spill_diagnostics_tests)
+  add_executable(pigment_color_interaction_tests tests/ColorInteractionTests.cpp)
+  target_link_libraries(pigment_color_interaction_tests PRIVATE pigment_core)
+  add_test(NAME pigment_color_interaction_tests COMMAND pigment_color_interaction_tests)
 
   add_executable(pigment_phase4_gate tests/Phase4GateHarness.cpp)
   target_link_libraries(pigment_phase4_gate PRIVATE pigment_core)

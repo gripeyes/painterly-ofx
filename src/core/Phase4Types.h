@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.h"
+#include "core/ColorInteraction.h"
 
 #include <array>
 #include <cstddef>
@@ -42,6 +43,8 @@ struct Phase4PlateControl {
 
 struct Phase4Params {
   Phase4Representation representation = Phase4Representation::Poisson;
+  ColorInteractionLaw colorInteraction = ColorInteractionLaw::LinearYAB;
+  float pigmentDensity = 0.0f;
   // Participation-amplitude overrides, not blur/extent radii. The existing
   // Plate Scale/Overlap/Chroma Support Ratio determine intrinsic graph extent.
   float ySupport = 1.0f, abSupport = 1.0f;
