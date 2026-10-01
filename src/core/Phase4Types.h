@@ -11,6 +11,8 @@ namespace pigment {
 
 constexpr int kPhase4LatentCapacity = 24;
 constexpr int kPhase4PlateCapacity = 8;
+// Research selectors only; C2 remains a standalone preserved baseline.
+enum class Phase4Representation { Poisson = 0, A3Passthrough, RegionalEigen, SparseCurve };
 
 enum class Phase4DebugView {
   Final = 0,
@@ -39,6 +41,10 @@ struct Phase4PlateControl {
 };
 
 struct Phase4Params {
+  Phase4Representation representation = Phase4Representation::Poisson;
+  // Participation-amplitude overrides, not blur/extent radii. The existing
+  // Plate Scale/Overlap/Chroma Support Ratio determine intrinsic graph extent.
+  float ySupport = 1.0f, abSupport = 1.0f;
   int latentCount = 16;
   int plateCount = 6;
   float plateScale = 48.0f;

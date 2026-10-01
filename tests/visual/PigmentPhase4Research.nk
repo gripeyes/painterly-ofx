@@ -1,0 +1,87 @@
+version 17.0 v1
+Root {
+ name /Users/j7s/coding/painterly-ofx/tests/visual/PigmentPhase4Research.nk
+ first_frame 1
+ last_frame 1
+}
+Read {
+ inputs 0
+ file /Users/j7s/coding/painterly-ofx/tests/visual/renders/phase4/comparative-pipeline/fashion/source.png
+ name ResearchSource
+ xpos 300
+ ypos 0
+}
+Reformat {
+ type "to box"
+ box_width 128
+ box_height 128
+ resize fit
+ name CPUResearchSize
+ label "Raise resolution for hands-on testing. Cold CPU analysis is slow."
+ xpos 300
+ ypos 100
+}
+set source [stack 0]
+OFXorg.painterlyofx.Pigment_v1 {
+ comparisonMode 6
+ phase4Representation 1
+ phase4SpillAmount 0.8
+ phase4LumaSpill 0
+ phase4ChromaSpill 1
+ phase4SpillReach 128
+ name C0_A3
+ label "C0 A3 passthrough — research only"
+ xpos 0
+ ypos 250
+}
+set c0 [stack 0]
+push $source
+OFXorg.painterlyofx.Pigment_v1 {
+ comparisonMode 6
+ phase4Representation 0
+ phase4SpillAmount 0.8
+ phase4LumaSpill 0
+ phase4ChromaSpill 1
+ phase4SpillReach 128
+ name C1_Poisson
+ label "C1 bounded Poisson — Gate C not accepted"
+ xpos 200
+ ypos 250
+}
+set c1 [stack 0]
+push $source
+OFXorg.painterlyofx.Pigment_v1 {
+ comparisonMode 6
+ phase4Representation 2
+ phase4SpillAmount 0.8
+ phase4LumaSpill 0
+ phase4ChromaSpill 1
+ phase4SpillReach 128
+ name C3_RegionalEigen
+ label "C3 regional eigen Y2/AB1 — Gate C not accepted"
+ xpos 400
+ ypos 250
+}
+set c3 [stack 0]
+push $source
+OFXorg.painterlyofx.Pigment_v1 {
+ comparisonMode 6
+ phase4Representation 3
+ phase4SpillAmount 0.8
+ phase4LumaSpill 0
+ phase4ChromaSpill 1
+ phase4SpillReach 128
+ name C4_SparseCurve
+ label "C4 sparse curve / field — Gate C not accepted"
+ xpos 600
+ ypos 250
+}
+push $c3
+push $c1
+push $c0
+Viewer {
+ inputs 4
+ name ResearchViewer
+ xpos 300
+ ypos 450
+}

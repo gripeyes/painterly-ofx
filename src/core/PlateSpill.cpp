@@ -15,43 +15,41 @@ std::vector<float> transport(const SparseAffinityGraph &graph,
                              const std::vector<float> &seed, float reach,
                              float structureRespect,const ExecutionContext &execution) {
   const int count = graph.nodeCount();
-  std::vector<float> distance(size_t(count),
-                              std::numeric_limits<float>::infinity());
+  // Max-product envelope: T(p)=max_q seed(q)*exp(-D_F(q,p)/reach).
+  // Reach is an e-fold graph-distance scale, not an amplitude-dependent
+  // cutoff. Weak seeds have exactly the same relative travel as strong seeds.
+  std::vector<float> result=seed;
   using Item = std::pair<float, int>;
-  std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
+  std::priority_queue<Item> queue;
   if (reach <= 0.0f)
     return seed;
   for (int node = 0; node < count; ++node)
-    if (seed[size_t(node)] > 1.0e-5f) {
-      distance[size_t(node)] =
-          -reach * std::log(std::max(1.0e-5f, seed[size_t(node)]));
-      queue.push({distance[size_t(node)], node});
+    if (seed[size_t(node)] > 0.0f) {
+      queue.push({seed[size_t(node)], node});
     }
   while (!queue.empty()) {
     if(execution.cancelled())throw std::runtime_error("Spill transport cancelled");
     auto [current, node] = queue.top();
     queue.pop();
-    if (current != distance[size_t(node)] || current > reach)
+    if (current != result[size_t(node)])
       continue;
     for (int edgeIndex = graph.rowOffsets[node];
          edgeIndex < graph.rowOffsets[node + 1]; ++edgeIndex) {
       const auto &edge = graph.edges[size_t(edgeIndex)];
       if(edge.weight<=0 || (structureRespect>=1 && edge.boundary>=1))continue;
-      float capacity = std::max(1.0e-6f, edge.weight);
+      // Zero was excluded above; log is finite for every positive float F.
+      // Do not promote very weak capacities to an arbitrary transport floor.
+      float capacity = edge.weight;
       float edgeCost =
           edge.physicalDistance *
           (1.0f - std::log(capacity) + 6.0f * structureRespect * edge.boundary);
-      float candidate = current + edgeCost;
-      if (candidate < distance[size_t(edge.target)] && candidate <= reach) {
-        distance[size_t(edge.target)] = candidate;
+      float candidate = current * std::exp(-edgeCost/reach);
+      if (candidate > result[size_t(edge.target)]) {
+        result[size_t(edge.target)] = candidate;
         queue.push({candidate, edge.target});
       }
     }
   }
-  std::vector<float> result(static_cast<size_t>(count));
-  for (int node = 0; node < count; ++node)
-    if (std::isfinite(distance[size_t(node)]))
-      result[size_t(node)] = std::exp(-distance[size_t(node)] / reach);
   return result;
 }
 
@@ -99,6 +97,16 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
         std::min(graph.height - 1, (y - bounds.y1) * graph.height / height);
     return field[size_t(gy) * graph.width + gx];
   };
+  // Lift only transported gain from the analysis graph. Intrinsic full-res
+  // support must not be resampled into graph cells, especially at Reach=0.
+  auto fullTransport=[&](int plate,bool ab,int x,int y){
+    auto support=ab?plates.supportAB(plate):plates.supportY(plate);
+    const float intrinsic=support.at(x,y);if(params.spillReach<=0)return intrinsic;
+    int gx=std::min(graph.width-1,(x-bounds.x1)*graph.width/width),gy=std::min(graph.height-1,(y-bounds.y1)*graph.height/height);
+    int sx=bounds.x1+std::min(width-1,gx*width/graph.width),sy=bounds.y1+std::min(height-1,gy*height/graph.height);
+    float gain=graphValue(ab?transportAB[size_t(plate)]:transportY[size_t(plate)],x,y)-support.at(sx,sy);
+    return std::min(1.f,intrinsic+std::max(0.f,gain));
+  };
   for (int y = bounds.y1; y < bounds.y2; ++y) {
     if(execution.cancelled())throw std::runtime_error("Spill reconstruction cancelled");
     for (int x = bounds.x1; x < bounds.x2; ++x) {
@@ -125,8 +133,8 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
         float sumY = baseY, sumA = baseA, sumB = baseB;
         float weightY = 1.0f, weightAB = 1.0f, influence = 0.0f;
         float influenceY=0;
-        result.transportY[size_t(receiver)].view().at(x,y)=graphValue(transportY[receiver],x,y);
-        result.transportAB[size_t(receiver)].view().at(x,y)=graphValue(transportAB[receiver],x,y);
+        result.transportY[size_t(receiver)].view().at(x,y)=fullTransport(receiver,false,x,y);
+        result.transportAB[size_t(receiver)].view().at(x,y)=fullTransport(receiver,true,x,y);
         if (receiverControl.enabled && params.spillAmount > 0.0f) {
           for (int donor = 0; donor < plateCount; ++donor) {
             if (donor == receiver)
@@ -134,10 +142,10 @@ Phase4SpillResult applyPhase4Spill(ConstYabPlanes original,
             const auto &donorControl = params.plates[size_t(donor)];
             if (!donorControl.enabled)
               continue;
-            float directedY = graphValue(transportY[donor], x, y);
-            float directedAB = graphValue(transportAB[donor], x, y);
-            float reverseY = graphValue(transportY[receiver], x, y);
-            float reverseAB = graphValue(transportAB[receiver], x, y);
+            float directedY = fullTransport(donor,false,x,y);
+            float directedAB = fullTransport(donor,true,x,y);
+            float reverseY = fullTransport(receiver,false,x,y);
+            float reverseAB = fullTransport(receiver,true,x,y);
             float asymmetry =
                 std::max(0.0f, std::min(1.0f, params.spillAsymmetry));
             directedY = asymmetry * directedY +

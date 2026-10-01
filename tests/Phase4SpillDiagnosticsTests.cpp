@@ -14,12 +14,31 @@ int main(){try {
   auto none=params;none.spillAmount=0;auto pre=pigment::applyPhase4Spill(static_cast<const pigment::OwnedYabPlanes&>(source).view(),upstream.plates,synthesis,graph,none);
   auto post=pigment::applyPhase4Spill(static_cast<const pigment::OwnedYabPlanes&>(source).view(),upstream.plates,synthesis,graph,params);
   require(post.transportY[0].view().at(1,0)>0,"directed F transports influence");
+  // A weak seed must have the same relative travel as a strong one.
+  upstream.plates.supportAB(0).at(0,0)=.02f;
+  auto shortReach=params;shortReach.spillReach=.5f;
+  auto near=pigment::preparePhase4SpillTransport(upstream.plates,graph,shortReach);
+  auto far=pigment::preparePhase4SpillTransport(upstream.plates,graph,params);
+  require(far.ab[0][1]>near.ab[0][1]*5,"Reach controls weak-seed geodesic travel");
+  require(std::abs(far.ab[0][1]/far.y[0][1]-.02f)<1e-6f,"seed amplitude independent of travel attenuation");
+  auto zeroReach=params;zeroReach.spillReach=0;
+  auto intrinsic=pigment::preparePhase4SpillTransport(upstream.plates,graph,zeroReach);
+  require(intrinsic.ab[0][0]==.02f && intrinsic.ab[0][1]==0,"zero reach is exact intrinsic support bypass");
+  // A full-resolution support sample not present on the analysis grid must
+  // survive zero reach unchanged, rather than being replaced by a graph cell.
+  {pigment::RectI large{0,0,4,1};pigment::PublicPlateSet plates(large,4);pigment::OwnedYabPlanes s(large);pigment::Phase4ChunkSynthesis c(large);
+    for(int i=0;i<4;++i){c.plateAppearance.emplace_back(large);for(int x=0;x<4;++x){plates.alpha(i).at(x,0)=.25f;plates.supportY(i).at(x,0)=.03f*(x+1);plates.supportAB(i).at(x,0)=.07f*(x+1);}}
+    auto r=pigment::applyPhase4Spill(static_cast<const pigment::OwnedYabPlanes&>(s).view(),plates,c,graph,zeroReach);
+    for(int i=0;i<4;++i)for(int x=0;x<4;++x){require(r.transportY[size_t(i)].view().at(x,0)==plates.supportY(i).at(x,0),"zero reach full-resolution Y exact");require(r.transportAB[size_t(i)].view().at(x,0)==plates.supportAB(i).at(x,0),"zero reach full-resolution AB exact");}}
+  upstream.plates.supportAB(0).at(0,0)=1;
   auto prepared=pigment::preparePhase4SpillTransport(upstream.plates,graph,params);
   auto reused=pigment::applyPhase4Spill(static_cast<const pigment::OwnedYabPlanes&>(source).view(),upstream.plates,synthesis,graph,params,{},&prepared);
   require(reused.composite.view().a.at(1,0)==post.composite.view().a.at(1,0),"transport reuse preserves exact output");
   for(int x=0;x<2;++x){require(pre.composite.view().y.at(x,0)==post.composite.view().y.at(x,0),"AB-only spill keeps Y bit exact");for(int p=0;p<4;++p)require(upstream.plates.alpha(p).at(x,0)==.25f,"alpha ownership immutable");}
   graph.edges[0].signedMixtureWeight=100;auto signedChange=pigment::applyPhase4Spill(static_cast<const pigment::OwnedYabPlanes&>(source).view(),upstream.plates,synthesis,graph,params);
   require(post.composite.view().a.at(1,0)==signedChange.composite.view().a.at(1,0),"signed W never used as transport capacity");
+  graph.edges[0].weight=1e-9f;auto tiny=pigment::preparePhase4SpillTransport(upstream.plates,graph,params);
+  require(std::abs(tiny.y[0][1]-std::exp(-(1-std::log(1e-9f))/params.spillReach))<1e-6f,"tiny positive F remains authoritative without a capacity floor");
   graph.edges[0].weight=0;auto blocked=pigment::applyPhase4Spill(static_cast<const pigment::OwnedYabPlanes&>(source).view(),upstream.plates,synthesis,graph,params);
   require(blocked.transportY[0].view().at(1,0)==0,"zero F is a hard transport barrier");
   graph.edges[0].weight=.9;graph.edges[0].boundary=1;params.structureRespect=1;

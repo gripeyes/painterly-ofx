@@ -535,6 +535,27 @@ void renderIdentityAndAlpha() {
               "Amount zero is bit-exact and preserves alpha");
     }
 }
+void researchRepresentationsAndCache() {
+  pigment::RectI b{0,0,16,16};std::vector<float> src(16*16*4),dst(src.size());
+  for(int y=0;y<16;++y)for(int x=0;x<16;++x){int n=(y*16+x)*4;src[n]=.02f*x;src[n+1]=.03f*y;src[n+2]=.05f+.01f*x;src[n+3]=1;}
+  pigment::IntegratedPigmentParams p;p.comparison=pigment::PigmentComparisonMode::AutomaticPlateGraph;p.phase4.latentCount=12;p.phase4.plateCount=4;p.phase4.lumaChunkScale=0;p.phase4.chromaChunkScale=0;p.phase4.spillAmount=0;p.phase4.representation=pigment::Phase4Representation::A3Passthrough;
+  pigment::Phase4ResearchCache cache;
+  pigment::Phase4RenderInputs in{{src.data(),64,b,4},{dst.data(),64,b,4},b,p,{},nullptr,&cache};
+  pigment::processPigmentPhase4(in);auto baseline=dst;
+  for(auto mode:{pigment::Phase4Representation::Poisson,pigment::Phase4Representation::RegionalEigen,pigment::Phase4Representation::SparseCurve}){
+    in.params.phase4.representation=mode;pigment::processPigmentPhase4(in);
+    check(dst==baseline,"Every research mode honors zero Y/AB chunk bypass exactly");
+  }
+  auto abuilds=cache.automaticBuilds,hbuilds=cache.hierarchyBuilds,sbuilds=cache.synthesisBuilds;
+  in.params.phase4.spillAmount=.8;in.params.phase4.lumaSpill=0;in.params.phase4.spillReach=128;in.params.phase4.plates[0].biasA=.03;
+  pigment::processPigmentPhase4(in);
+  check(cache.automaticBuilds==abuilds && cache.hierarchyBuilds==hbuilds && cache.synthesisBuilds==sbuilds,"Creative/Spill controls reuse frozen upstream and selected synthesis");
+  for(int i=0;i<256;++i)check(dst[4*i+3]==src[4*i+3],"Research representations preserve alpha");
+  for(auto debug:{pigment::PigmentDebugView::Phase4Source,pigment::PigmentDebugView::Phase4PublicReconstruction,pigment::PigmentDebugView::Phase4PreSpill,pigment::PigmentDebugView::Phase4SpillDifference,pigment::PigmentDebugView::Phase4YTransport,pigment::PigmentDebugView::Phase4ABTransport,pigment::PigmentDebugView::Phase4SourceGradientField}){
+    in.params.debugView=debug;pigment::processPigmentPhase4(in);for(float v:dst)check(std::isfinite(v),"Research debug fields finite and valid in every mode");
+    if(debug==pigment::PigmentDebugView::Phase4Source)check(dst==src,"Source diagnostic bit exact");
+  }
+}
 } // namespace
 int main() {
   parameterSemantics();
@@ -544,6 +565,7 @@ int main() {
   interiorBroadForm();
   barrierAblationSemantics();
   renderIdentityAndAlpha();
+  researchRepresentationsAndCache();
   if (failures)
     return 1;
   std::cout << "All Phase 4 CPU tests passed (photographic gates are evaluated separately)\n";

@@ -4,11 +4,15 @@
 #include "core/ColorSpace.h"
 #include "core/PlateSpill.h"
 #include "core/RegionHierarchy.h"
+#include "core/RegionalEigenField.h"
+#include "core/SparseTransitionField.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <optional>
+#include <cstring>
+#include <stdexcept>
 
 namespace pigment {
 namespace {
@@ -35,8 +39,9 @@ processPigmentPhase4(const Phase4RenderInputs &in,
   const RectI b = in.source.bounds;
   const auto &p = in.params;
   MatrixOpponentTransform transform(p.gamut);
-  if (p.debugView == PigmentDebugView::Final &&
-      (p.amount == 0.0f || p.mix == 0.0f)) {
+  if (p.debugView == PigmentDebugView::Phase4Source ||
+      (p.debugView == PigmentDebugView::Final &&
+      (p.amount == 0.0f || p.mix == 0.0f))) {
     execution.parallelRows(
         in.renderWindow.y1, in.renderWindow.y2, [&](int y0, int y1) {
           for (int y = y0; y < y1; ++y)
@@ -67,28 +72,57 @@ processPigmentPhase4(const Phase4RenderInputs &in,
       ov.a.at(x, y) = q.a;
       ov.b.at(x, y) = q.b;
     }
-  auto automatic = buildPhase4AutomaticPlates(
-      static_cast<const OwnedYabPlanes &>(original).view(), p.phase4,
-      in.geometry, execution);
-  auto hierarchy = buildPhase4RegionHierarchy(
-      static_cast<const OwnedYabPlanes &>(original).view(), automatic.plates,
-      p.phase4, execution);
-  auto synthesis = synthesizePhase4Chunks(
-      static_cast<const OwnedYabPlanes &>(original).view(), automatic.plates,
-      hierarchy, p.phase4, execution);
+  Phase4ResearchCache localCache;
+  auto &cache=in.cache?*in.cache:localCache;
+  uint64_t hash=1469598103934665603ull;
+  for(auto field:{ov.y,ov.a,ov.b})for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){uint32_t bits;float v=field.at(x,y);std::memcpy(&bits,&v,4);hash^=bits;hash*=1099511628211ull;}
+  std::vector<double> key{double(hash>>32),double(uint32_t(hash)),double(b.x1),double(b.y1),double(b.x2),double(b.y2),in.geometry.pixelAspect,in.geometry.renderScaleX,in.geometry.renderScaleY,
+    double(p.phase4.latentCount),double(p.phase4.plateCount),p.phase4.plateScale,p.phase4.plateOverlap,p.phase4.chromaSupportRatio,p.phase4.lumaChromaCoupling};
+  if(!cache.automatic || cache.automaticKey!=key){
+    auto frozen=p.phase4;frozen.structureRespect=.8f; // approved intrinsic support context; Spill respect is independent
+    auto next=std::make_unique<Phase4AutomaticResult>(buildPhase4AutomaticPlates(static_cast<const OwnedYabPlanes&>(original).view(),frozen,in.geometry,execution));
+    if(execution.cancelled())throw std::runtime_error("Phase 4 automatic build cancelled");
+    if(!next->diagnostics.eigenspaceFinite || !next->diagnostics.componentsFinite || !next->diagnostics.appearanceFinite)return {next->diagnostics};
+    cache.automatic=std::move(next);cache.automaticKey=key;cache.hierarchy.reset();cache.synthesis.reset();++cache.automaticBuilds;
+  }
+  auto hkey=key;for(float v:{p.phase4.ySupport,p.phase4.abSupport,p.phase4.boundaryLock,p.phase4.mergeSelectivity,p.phase4.internalVariation,p.phase4.lumaChunkScale,p.phase4.chromaChunkScale})hkey.push_back(v);
+  if(!cache.hierarchy || cache.hierarchyKey!=hkey){
+    auto supported=std::make_unique<PublicPlateSet>(cache.automatic->plates);
+    for(int i=0;i<supported->count();++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){supported->supportY(i).at(x,y)=clamp01(supported->supportY(i).at(x,y)*p.phase4.ySupport);supported->supportAB(i).at(x,y)=clamp01(supported->supportAB(i).at(x,y)*p.phase4.abSupport);}
+    auto next=std::make_unique<Phase4RegionHierarchy>(buildPhase4RegionHierarchy(static_cast<const OwnedYabPlanes&>(original).view(),*supported,p.phase4,execution));
+    if(execution.cancelled())throw std::runtime_error("Phase 4 hierarchy build cancelled");
+    cache.supported=std::move(supported);cache.hierarchy=std::move(next);cache.hierarchyKey=hkey;cache.synthesis.reset();++cache.hierarchyBuilds;
+  }
+  auto skey=hkey;skey.push_back(int(p.phase4.representation));skey.push_back(p.phase4.gradientComplexity);
+  if(!cache.synthesis || cache.synthesisKey!=skey){
+    auto next=std::make_unique<Phase4ChunkSynthesis>(b);
+    if(p.phase4.representation==Phase4Representation::Poisson)*next=synthesizePhase4Chunks(static_cast<const OwnedYabPlanes&>(original).view(),*cache.supported,*cache.hierarchy,p.phase4,execution);
+    else if(p.phase4.representation==Phase4Representation::RegionalEigen){auto eigen=regionalEigenFieldSweep(*cache.supported,*cache.hierarchy,execution,false,true);next->plateAppearance=std::move(eigen.results.front().appearance);}
+    else if(p.phase4.representation==Phase4Representation::SparseCurve){auto curves=sparseTransitionField(*cache.supported,*cache.hierarchy,execution);next->plateAppearance=std::move(curves.appearance);}
+    else for(int i=0;i<cache.supported->count();++i){next->plateAppearance.emplace_back(b);auto from=cache.supported->appearance(i);auto to=next->plateAppearance.back().view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){to.y.at(x,y)=from.y.at(x,y);to.a.at(x,y)=from.a.at(x,y);to.b.at(x,y)=from.b.at(x,y);}}
+    // Zero chunk scale is an exact per-family synthesis bypass in every mode.
+    for(int i=0;i<cache.supported->count();++i){auto from=cache.supported->appearance(i);auto to=next->plateAppearance[size_t(i)].view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){if(p.phase4.lumaChunkScale==0)to.y.at(x,y)=from.y.at(x,y);if(p.phase4.chromaChunkScale==0){to.a.at(x,y)=from.a.at(x,y);to.b.at(x,y)=from.b.at(x,y);}}}
+    if(execution.cancelled())throw std::runtime_error("Phase 4 synthesis build cancelled");
+    for(const auto &plate:next->solver)for(const auto &solver:plate)if(!solver.converged)return {cache.automatic->diagnostics,false};
+    cache.synthesis=std::move(next);cache.synthesisKey=skey;++cache.synthesisBuilds;
+  }
+  const auto &automatic=*cache.automatic;
+  const auto &plates=*cache.supported;
+  const auto &hierarchy=*cache.hierarchy;
+  const auto &synthesis=*cache.synthesis;
   for(const auto &plate : synthesis.solver)
     for(const auto &solver : plate)
       if(!solver.converged) return {automatic.diagnostics, false};
   auto spill = applyPhase4Spill(static_cast<const OwnedYabPlanes &>(original).view(),
-                                automatic.plates, synthesis,
+                                plates, synthesis,
                                 automatic.analysisGraph, p.phase4, execution);
   std::optional<Phase4SpillResult> artisticPreSpill;
-  if (p.debugView == PigmentDebugView::Phase4PreSpill) {
+  if (p.debugView == PigmentDebugView::Phase4PreSpill || p.debugView == PigmentDebugView::Phase4SpillDifference) {
     auto noSpill = p.phase4;
     noSpill.spillAmount = 0.0f;
     artisticPreSpill.emplace(applyPhase4Spill(
         static_cast<const OwnedYabPlanes &>(original).view(),
-        automatic.plates, synthesis, automatic.analysisGraph, noSpill,
+        plates, synthesis, automatic.analysisGraph, noSpill,
         execution));
   }
   const int plateCount = automatic.plates.count(),
@@ -109,6 +143,21 @@ processPigmentPhase4(const Phase4RenderInputs &in,
                          x, y);
             bool gray = false, composite = false;
             switch (p.debugView) {
+            case PigmentDebugView::Phase4Source: out=source; break;
+            case PigmentDebugView::Phase4PublicReconstruction: {
+              out={0,0,0};for(int i=0;i<plateCount;++i){float a=automatic.plates.alpha(i).at(x,y);auto v=plateValue(automatic.plates,i,x,y);out.y+=a*v.y;out.a+=a*v.a;out.b+=a*v.b;}break;
+            }
+            case PigmentDebugView::Phase4SpillDifference: {
+              auto pre=value(static_cast<const OwnedYabPlanes&>(artisticPreSpill->composite).view(),x,y);
+              out={.5f+16*(out.y-pre.y),.5f+16*(out.a-pre.a),.5f+16*(out.b-pre.b)};composite=true;break;
+            }
+            case PigmentDebugView::Phase4YInfluence:
+            case PigmentDebugView::Phase4YTransport:
+            case PigmentDebugView::Phase4ABTransport: {
+              int i=std::max(0,std::min(plateCount-1,p.phase4.debugPlate));
+              const auto &fields=p.debugView==PigmentDebugView::Phase4YInfluence?spill.influenceY:(p.debugView==PigmentDebugView::Phase4YTransport?spill.transportY:spill.transportAB);
+              out={fields[size_t(i)].view().at(x,y),0,0};gray=true;break;
+            }
             case PigmentDebugView::Phase4SourceBoundaryStrength:
             case PigmentDebugView::Phase4BoundaryHierarchy: {
               float v = hierarchy.boundaryStrength.view().at(x, y);
@@ -180,7 +229,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
             case PigmentDebugView::Phase4PlateYSupport: {
               int i =
                   std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
-              float v = automatic.plates.supportY(i).at(x, y);
+              float v = plates.supportY(i).at(x, y);
               out = {v, 0, 0};
               gray = true;
               break;
@@ -188,7 +237,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
             case PigmentDebugView::Phase4PlateABSupport: {
               int i =
                   std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
-              float v = automatic.plates.supportAB(i).at(x, y);
+              float v = plates.supportAB(i).at(x, y);
               out = {v, 0, 0};
               gray = true;
               break;
@@ -261,6 +310,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
             }
             case PigmentDebugView::Phase4SourceGradientField:
             case PigmentDebugView::Phase4SimplifiedGradientField: {
+              if(synthesis.sourceGradient.empty()){out={0,0,0};gray=true;break;}
               int i =
                   std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
               float v =
@@ -284,6 +334,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
               break;
             }
             case PigmentDebugView::Phase4PrimitiveFitError: {
+              if(synthesis.fitError.empty()){out={0,0,0};gray=true;break;}
               int i =
                   std::max(0, std::min(plateCount - 1, p.phase4.debugPlate));
               float v = synthesis.fitError[size_t(i)].view().at(x,y);

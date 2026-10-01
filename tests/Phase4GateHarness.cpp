@@ -201,6 +201,7 @@ void writeComponentDiagnostics(
 }
 } // namespace
 #include "Phase4ComparativePipeline.h"
+#include "Phase4ReachComparison.h"
 
 int main(int argc, char **argv) {
   try {
@@ -253,7 +254,8 @@ int main(int argc, char **argv) {
       params.plates[size_t(donor)].weight =
           argc > 15 ? std::stof(argv[15]) : 1.0f;
     }
-    bool comparative=std::string(argv[argc-1])=="--comparative-pipeline";
+    bool repairedReach=std::string(argv[argc-1])=="--repaired-spill-comparison";
+    bool comparative=std::string(argv[argc-1])=="--comparative-pipeline" || repairedReach;
     if(comparative && !std::filesystem::exists(outputDir/"source.ppm"))std::filesystem::copy_file(argv[1],outputDir/"source.ppm");
     auto cachePath=outputDir/"shared-upstream.snapshot";
     auto cacheKey=research::key(static_cast<const pigment::OwnedYabPlanes&>(yab).view(),params);
@@ -351,6 +353,7 @@ int main(int argc, char **argv) {
                plateHierarchy.abRetainedBoundaries.view());
     }
     }
+    if(repairedReach){research::repairedReachComparison(outputDir,static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,params,transform);return 0;}
     if(comparative){if(!cached)research::saveSnapshot(cachePath,cacheKey,constant,hierarchy);
       research::comparePipeline(outputDir,std::filesystem::path(argv[1]).stem().string(),static_cast<const pigment::OwnedYabPlanes&>(yab).view(),constant,hierarchy,params,transform);
       std::cout<<"PHASE4_COMPARATIVE cache="<<(cached?"reused":"created")<<" output="<<outputDir<<'\n';return 0;}

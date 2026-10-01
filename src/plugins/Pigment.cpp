@@ -14,6 +14,7 @@
 #include <array>
 #include <memory>
 #include <sstream>
+#include <mutex>
 
 namespace pigment::plugin {
 namespace {
@@ -77,6 +78,9 @@ constexpr const char* kPhase33StructurePreserve = "phase33StructurePreserve";
 constexpr const char* kTransitionSolver = "phase33TransitionSolver";
 constexpr const char* kComputeBackend = "phase33ComputeBackend";
 constexpr const char* kPhase4PlateCount = "phase4PlateCount";
+constexpr const char* kPhase4Representation = "phase4Representation";
+constexpr const char* kPhase4YSupport = "phase4YSupport";
+constexpr const char* kPhase4ABSupport = "phase4ABSupport";
 constexpr const char* kPhase4LatentCount = "phase4LatentCount";
 constexpr const char* kPhase4PlateScale = "phase4PlateScale";
 constexpr const char* kPhase4PlateOverlap = "phase4PlateOverlap";
@@ -176,6 +180,9 @@ class PigmentEffect final : public OFX::ImageEffect {
     transitionSolver_ = fetchChoiceParam(kTransitionSolver);
     computeBackend_ = fetchChoiceParam(kComputeBackend);
     phase4PlateCount_ = fetchIntParam(kPhase4PlateCount);
+    phase4Representation_ = fetchChoiceParam(kPhase4Representation);
+    phase4YSupport_ = fetchDoubleParam(kPhase4YSupport);
+    phase4ABSupport_ = fetchDoubleParam(kPhase4ABSupport);
     phase4LatentCount_ = fetchIntParam(kPhase4LatentCount);
     phase4DebugLatent_ = fetchIntParam(kPhase4DebugLatent);
     phase4DebugPlate_ = fetchIntParam(kPhase4DebugPlate);
@@ -244,6 +251,10 @@ class PigmentEffect final : public OFX::ImageEffect {
   OFX::IntParam* veilSeed_ = nullptr;
   OFX::IntParam *phase4PlateCount_ = nullptr, *phase4LatentCount_ = nullptr,
       *phase4DebugLatent_ = nullptr, *phase4DebugPlate_ = nullptr;
+  OFX::ChoiceParam* phase4Representation_ = nullptr;
+  OFX::DoubleParam *phase4YSupport_ = nullptr, *phase4ABSupport_ = nullptr;
+  Phase4ResearchCache phase4Cache_;
+  std::mutex phase4Mutex_;
   OFX::BooleanParam* invertMask_ = nullptr;
   OFX::ChoiceParam *gamut_ = nullptr, *comparison_ = nullptr, *debug_ = nullptr,
       *debugPlane_ = nullptr, *planeSource_ = nullptr, *shadingModel_ = nullptr,
@@ -292,7 +303,7 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   comparison_->getValueAtTime(time, value);
   p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(6, value)));
   debug_->getValueAtTime(time, value);
-  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(96, value)));
+  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(int(PigmentDebugView::Phase4ABTransport), value)));
   debugPlane_->getValueAtTime(time, value);
   p.debugPlane = static_cast<PictorialDebugPlane>(std::max(0, std::min(4, value)));
   p.pictorial.fineExtinction = static_cast<float>(fineExtinction_->getValueAtTime(time));
@@ -324,6 +335,10 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   computeBackend_->getValueAtTime(time, value);
   p.phase33.backend = static_cast<PigmentComputeBackend>(std::max(0, std::min(2, value)));
   p.phase4.plateCount = std::max(4, std::min(8, phase4PlateCount_->getValueAtTime(time)));
+  phase4Representation_->getValueAtTime(time,value);
+  p.phase4.representation=static_cast<Phase4Representation>(std::max(0,std::min(3,value)));
+  p.phase4.ySupport=float(phase4YSupport_->getValueAtTime(time));
+  p.phase4.abSupport=float(phase4ABSupport_->getValueAtTime(time));
   p.phase4.latentCount = std::max(12, std::min(24, phase4LatentCount_->getValueAtTime(time)));
   p.phase4.debugLatent = std::max(0, std::min(23, phase4DebugLatent_->getValueAtTime(time)-1));
   p.phase4.debugPlate = std::max(0, std::min(7, phase4DebugPlate_->getValueAtTime(time)));
@@ -438,7 +453,8 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
         ofx::toRect(maskImage->getBounds()), maskImage->getPixelComponentCount()};
     Phase4RenderInputs cpu{sourceView, destinationView, ofx::toRect(args.renderWindow), p,
         {source->getPixelAspectRatio(), args.renderScale.x, args.renderScale.y},
-        maskImage ? &maskView : nullptr};
+        maskImage ? &maskView : nullptr, &phase4Cache_};
+    std::lock_guard<std::mutex> phase4Lock(phase4Mutex_);
     const auto diagnostics = processPigmentPhase4(
         cpu, {[this] { return abort(); }, serialRows, nullptr});
     if(!diagnostics.reconstructionConverged) {
@@ -522,11 +538,19 @@ void PigmentEffect::render(const OFX::RenderArguments& args) {
 }
 
 void PigmentEffect::purgeCaches() {
+  {std::lock_guard<std::mutex> lock(phase4Mutex_);phase4Cache_=Phase4ResearchCache{};}
 #ifdef PIGMENT_ENABLE_METAL
   if (metal_) metal_->releaseTransientResources();
 #endif
 }
-void PigmentEffect::endSequenceRender(const OFX::EndSequenceRenderArguments&) { purgeCaches(); }
+void PigmentEffect::endSequenceRender(const OFX::EndSequenceRenderArguments&) {
+  // The CPU cache owns mathematical arrays, never host images. Keep its one
+  // source/one representation across Viewer sequence boundaries so parameter
+  // edits remain usable. Explicit host purge and node destruction release it.
+#ifdef PIGMENT_ENABLE_METAL
+  if (metal_) metal_->releaseTransientResources();
+#endif
+}
 
 OFX::GroupParamDescriptor* group(OFX::ImageEffectDescriptor& d, const char* name,
                                  const char* label, bool open = true) {
@@ -720,6 +744,9 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   backend->setDefault(0); backend->setParent(*solver);
 
   auto* phase4 = group(d, "phase4Group", "Automatic Plate Graph (Phase 4)", false);
+  auto* representation=d.defineChoiceParam(kPhase4Representation);representation->setLabels("Research Representation","Research Representation","Research Representation");representation->setScriptName(kPhase4Representation);representation->appendOption("C1 Bounded Poisson");representation->appendOption("C0 A3 Passthrough");representation->appendOption("C3 Regional Eigen (Y2 / AB1)");representation->appendOption("C4 Sparse Curve / Field");representation->setDefault(0);representation->setParent(*phase4);representation->setHint("CPU research comparisons, not photographic acceptance. C2 remains a standalone baseline.");
+  number(d,*phase4,kPhase4YSupport,"Y Support Strength",1,0,2,2,"Intrinsic support participation amplitude; does not expand alpha or change spectral extraction");
+  number(d,*phase4,kPhase4ABSupport,"AB Support Strength",1,0,2,2,"Intrinsic AB support participation amplitude; Plate Scale/Overlap and Chroma Support Ratio control graph extent");
   auto* phase4Auto = group(d, "phase4AutoGroup", "Auto Plates", true); phase4Auto->setParent(*phase4);
   auto* plateCount = d.defineIntParam(kPhase4PlateCount); plateCount->setLabels("Plate Count","Plate Count","Plate Count"); plateCount->setDefault(6); plateCount->setRange(4,8); plateCount->setDisplayRange(4,8); plateCount->setParent(*phase4Auto);
   number(d,*phase4Auto,kPhase4PlateScale,"Plate Scale",48,4,256,128,"Graph-geodesic component adjacency scale; never a blur radius");
@@ -735,7 +762,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   number(d,*phase4Chunk,kPhase4GradientComplexity,"Gradient Complexity",.35,0,1,1,"Primitive acceptance and residual-gradient survival",OFX::eDoubleTypeScale);
   auto* phase4Spill=group(d,"phase4SpillGroup","Plate Interaction",false);phase4Spill->setParent(*phase4);
   number(d,*phase4Spill,kPhase4SpillAmount,"Spill Amount",.25,0,1,1,"Directed graph-based plate interaction",OFX::eDoubleTypeScale);
-  number(d,*phase4Spill,kPhase4SpillReach,"Spill Reach",48,0,256,128,"Maximum information-flow graph path budget");
+  number(d,*phase4Spill,kPhase4SpillReach,"Spill Reach",48,0,256,128,"E-fold directed graph-distance attenuation scale, independent of seed amplitude; zero keeps intrinsic support exactly");
   number(d,*phase4Spill,kPhase4SpillAsymmetry,"Spill Asymmetry",.5,0,1,1,"Blend from symmetric to directed information flow",OFX::eDoubleTypeScale);
   number(d,*phase4Spill,kPhase4ChromaSpill,"Chroma Spill",.75,0,1,1,"AB interaction strength",OFX::eDoubleTypeScale);
   number(d,*phase4Spill,kPhase4LumaSpill,"Luma Spill",.15,0,1,1,"Y interaction strength",OFX::eDoubleTypeScale);
@@ -798,6 +825,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
       "Phase 3.3 Difference From Original", "Transition Solver Residual"})
     debug->appendOption(option);
   for(const char* option:{"Phase 4 Source Boundary Strength","Phase 4 Boundary Hierarchy / UCM","Phase 4 Atomic Regions","Phase 4 Latent Fuzzy Component","Phase 4 Latent Composite","Phase 4 Latent Reconstruction Error","Phase 4 Spectral Eigenspace Residual","Phase 4 Component Recovery Projection Error","Phase 4 Appearance-Unmixing Error","Phase 4 Artist Plate Alpha","Phase 4 Artist Plate Y Support","Phase 4 Artist Plate AB Support","Phase 4 Plate Y Appearance","Phase 4 Plate AB Appearance","Phase 4 Plate Overlap Composite","Phase 4 Y Region Hierarchy","Phase 4 AB Region Hierarchy","Phase 4 Removed Boundaries","Phase 4 Retained Boundaries","Phase 4 Y Chunks","Phase 4 AB Chunks","Phase 4 Source Gradient Field","Phase 4 Simplified Gradient Field","Phase 4 Gradient Reconstruction","Phase 4 Primitive Selection / Fit Error","Phase 4 Pre-Spill Result","Phase 4 Spill Influence Per Plate","Phase 4 Post-Spill Result","Phase 4 Difference From Source"})debug->appendOption(option);
+  for(const char* option:{"Phase 4 Source","Phase 4 Public Reconstruction","Phase 4 Spill Difference x16","Phase 4 Y Influence","Phase 4 Y Transport","Phase 4 AB Transport"})debug->appendOption(option);
   debug->setDefault(0); debug->setParent(*advanced);
   auto* debugPlane = d.defineChoiceParam(kDebugPlane);
   debugPlane->setLabels("Debug Plane", "Debug Plane", "Debug Plane");
