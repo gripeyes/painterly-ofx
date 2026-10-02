@@ -2,3 +2,7 @@
 /.cache/
 .DS_Store
 /tests/__pycache__/
+
+# Generated photographic research outputs stay local, not in Git history.
+# Keep source fixtures, Nuke scenes, test scripts, and reports tracked.
+/tests/visual/renders/
