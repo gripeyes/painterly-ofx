@@ -50,6 +50,9 @@ The repeatable host installation, node-discovery, troubleshooting, and future fa
 registration workflow is documented in
 [`docs/HostNodeExposure.md`](docs/HostNodeExposure.md).
 
+For a practical development tutorial, see
+[Writing OFX Nodes for Nuke](docs/WritingOFXNodesForNuke.md).
+
 ## Nuke validation
 
 The smoke test checks discovery, parameter creation, odd-sized float RGB/RGBA renders,
