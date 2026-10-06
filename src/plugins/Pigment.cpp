@@ -356,7 +356,7 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   comparison_->getValueAtTime(time, value);
   p.comparison = static_cast<PigmentComparisonMode>(std::max(0, std::min(6, value)));
   debug_->getValueAtTime(time, value);
-  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(int(PigmentDebugView::Phase4ABTransport), value)));
+  p.debugView = static_cast<PigmentDebugView>(std::max(0, std::min(int(PigmentDebugView::Phase4C5CombinedAB), value)));
   debugPlane_->getValueAtTime(time, value);
   p.debugPlane = static_cast<PictorialDebugPlane>(std::max(0, std::min(4, value)));
   p.pictorial.fineExtinction = static_cast<float>(fineExtinction_->getValueAtTime(time));
@@ -389,7 +389,7 @@ IntegratedPigmentParams PigmentEffect::parameters(double time) const {
   p.phase33.backend = static_cast<PigmentComputeBackend>(std::max(0, std::min(2, value)));
   p.phase4.plateCount = std::max(4, std::min(8, phase4PlateCount_->getValueAtTime(time)));
   phase4Representation_->getValueAtTime(time,value);
-  p.phase4.representation=static_cast<Phase4Representation>(std::max(0,std::min(4,value)));
+  p.phase4.representation=static_cast<Phase4Representation>(std::max(0,std::min(int(Phase4Representation::LayeredBroadFields),value)));
   colorInteraction_->getValueAtTime(time,value);
   p.phase4.colorInteraction=static_cast<ColorInteractionLaw>(std::clamp(value,0,2));
   p.phase4.pigmentDensity=float(pigmentDensity_->getValueAtTime(time));
@@ -785,7 +785,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
 
   auto* interface=d.defineChoiceParam(kPigmentInterface);interface->setLabels("Interface","Interface","Interface");interface->setScriptName(kPigmentInterface);
   interface->appendOption("Legacy Comparisons");interface->appendOption("Pigment");interface->appendOption("Research");interface->setDefault(1);interface->setAnimates(false);
-  interface->setHint("Pigment is the normal artist interface. Research exposes C0-C4 and diagnostics. Legacy Comparisons retains historical algorithms without changing saved choice indices.");
+  interface->setHint("Pigment is the normal artist interface. Research exposes C0-C5 and diagnostics. Legacy Comparisons retains historical algorithms without changing saved choice indices.");
   auto* artist=group(d,"pigmentArtistGroup","Pigment",true);
   constexpr std::array<const char*,10> artistLabels{"Pictorial Scale","Structure Lock","Luma Organization","Chroma Organization","Luma Complexity","Chroma Complexity","Chroma Spread","Spill","Spill Reach","Spill Directionality / Asymmetry"};
   constexpr std::array<double,10> artistDefaults{48,.75,.5,2./3.,.5,.25,1./3.,.25,48,.5};
@@ -965,7 +965,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   backend->setDefault(0); backend->setParent(*solver);
 
   auto* phase4 = group(d, "phase4Group", "Research / Compare — Phase 4", true);
-  auto* representation=d.defineChoiceParam(kPhase4Representation);representation->setLabels("Research Representation","Research Representation","Research Representation");representation->setScriptName(kPhase4Representation);representation->appendOption("C1 Bounded Poisson");representation->appendOption("C0 A3 Passthrough");representation->appendOption("C3 Regional Eigen (Y2 / AB1)");representation->appendOption("C4 Sparse Curve / Field");representation->appendOption("C2 Preserved Second Moments");representation->setDefault(0);representation->setParent(*phase4);representation->setHint("Named CPU comparison baselines, not photographic acceptance. C2 is the preserved fixed moment experiment, not an acceleration target.");
+  auto* representation=d.defineChoiceParam(kPhase4Representation);representation->setLabels("Research Representation","Research Representation","Research Representation");representation->setScriptName(kPhase4Representation);representation->appendOption("C1 Bounded Poisson");representation->appendOption("C0 A3 Passthrough");representation->appendOption("C3 Regional Eigen (Y2 / AB1)");representation->appendOption("C4 Sparse Curve / Field");representation->appendOption("C2 Preserved Second Moments");representation->appendOption("C5 Layered Broad Fields (Experimental)");representation->setDefault(0);representation->setParent(*phase4);representation->setHint("Named CPU comparison baselines, not photographic acceptance. C5 exposes the preserved failed isolation prototype: up to four Y / three AB broad sublayers, not one field per chunk. C2/C5 are CPU research fields, not acceleration targets.");
   number(d,*phase4,kPhase4YSupport,"Y Support Strength",1,0,2,2,"Intrinsic support participation amplitude; does not expand alpha or change spectral extraction");
   number(d,*phase4,kPhase4ABSupport,"AB Support Strength",1,0,2,2,"Intrinsic AB support participation amplitude; Plate Scale/Overlap and Chroma Support Ratio control graph extent");
   // Keep dynamically switched research sections at one nesting level. Nuke's
@@ -998,6 +998,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
   auto* phase4Research=group(d,"phase4ResearchGroup","Phase 4 Research Advanced",true);
   auto* latentCount=d.defineIntParam(kPhase4LatentCount);latentCount->setLabels("Latent Components","Latent Components","Latent Components");latentCount->setDefault(16);latentCount->setRange(12,24);latentCount->setDisplayRange(12,24);latentCount->setParent(*phase4Research);
   auto* debugLatent=d.defineIntParam(kPhase4DebugLatent);debugLatent->setLabels("Debug Latent","Debug Latent","Debug Latent");debugLatent->setDefault(1);debugLatent->setRange(1,24);debugLatent->setDisplayRange(1,24);debugLatent->setParent(*phase4Research);
+  debugLatent->setHint("Latent component index; for C5 sublayer views, selects the 1-based Y or AB sublayer within Debug Plate. Unused sublayers display zero.");
   auto* debugPlate=d.defineIntParam(kPhase4DebugPlate);debugPlate->setLabels("Debug Plate","Debug Plate","Debug Plate");debugPlate->setDefault(0);debugPlate->setRange(0,7);debugPlate->setDisplayRange(0,7);debugPlate->setParent(*phase4Research);
 
   auto* advanced = group(d, "advancedGroup", "Research Advanced", true);
@@ -1052,6 +1053,7 @@ void PigmentFactory::describeInContext(OFX::ImageEffectDescriptor& d,
     debug->appendOption(option);
   for(const char* option:{"Phase 4 Source Boundary Strength","Phase 4 Boundary Hierarchy / UCM","Phase 4 Atomic Regions","Phase 4 Latent Fuzzy Component","Phase 4 Latent Composite","Phase 4 Latent Reconstruction Error","Phase 4 Spectral Eigenspace Residual","Phase 4 Component Recovery Projection Error","Phase 4 Appearance-Unmixing Error","Phase 4 Artist Plate Alpha","Phase 4 Artist Plate Y Support","Phase 4 Artist Plate AB Support","Phase 4 Plate Y Appearance","Phase 4 Plate AB Appearance","Phase 4 Plate Overlap Composite","Phase 4 Y Region Hierarchy","Phase 4 AB Region Hierarchy","Phase 4 Removed Boundaries","Phase 4 Retained Boundaries","Phase 4 Y Chunks","Phase 4 AB Chunks","Phase 4 Source Gradient Field","Phase 4 Simplified Gradient Field","Phase 4 Gradient Reconstruction","Phase 4 Primitive Selection / Fit Error","Phase 4 Pre-Spill Result","Phase 4 Spill Influence Per Plate","Phase 4 Post-Spill Result","Phase 4 Difference From Source"})debug->appendOption(option);
   for(const char* option:{"Phase 4 Source","Phase 4 Public Reconstruction","Phase 4 Spill Difference x16","Phase 4 Y Influence","Phase 4 Y Transport","Phase 4 AB Transport"})debug->appendOption(option);
+  for(const char* option:{"C5 Broad Target Y","C5 Broad Target AB","C5 Retained Structure (signed)","C5 Medium Description (signed)","C5 Micro Residual (signed)","C5 Sublayer Y Membership","C5 Sublayer AB Membership","C5 Sublayer Y Field","C5 Sublayer AB Field","C5 Combined Broad Y","C5 Combined Broad AB"})debug->appendOption(option);
   debug->setDefault(0); debug->setParent(*advanced);
   auto* debugPlane = d.defineChoiceParam(kDebugPlane);
   debugPlane->setLabels("Debug Plane", "Debug Plane", "Debug Plane");

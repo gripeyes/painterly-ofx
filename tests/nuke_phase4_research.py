@@ -14,7 +14,7 @@ small = nuke.nodes.Reformat(inputs=[source], type="to box", box_width=128, box_h
 small["label"].setValue("CPU research size: raise for hands-on evaluation")
 records = []
 nodes = []
-for value, label in [(1,"C0 A3 Passthrough"),(0,"C1 Bounded Poisson"),(2,"C3 Regional Eigen"),(3,"C4 Sparse Curve"),(4,"C2 Preserved Moments")]:
+for value, label in [(1,"C0 A3 Passthrough"),(0,"C1 Bounded Poisson"),(2,"C3 Regional Eigen"),(3,"C4 Sparse Curve"),(4,"C2 Preserved Moments"),(5,"C5 Layered Broad Fields (Experimental)")]:
     node = nuke.createNode(kind, inpanel=False)
     node.setInput(0, small)
     required = {"phase4Representation", "phase4YSupport", "phase4ABSupport", "phase4SpillReach", "phase4StructureRespect", "pigmentInterface", "pigmentCopyToResearch", "phase4IndependentComplexity", "phase4YComplexity", "phase4ABComplexity", "phase4ColorInteraction", "phase4PigmentDensity", "phase4ComputeBackend"}
@@ -88,7 +88,7 @@ artist["phase4ComputeBackend"].setValue(0)
 artist["label"].setValue("Pigment — Auto hybrid\nGate C remains unaccepted; change Read to test other images")
 nodes.insert(0,artist)
 viewer = nuke.nodes.Viewer(inputs=nodes)
-viewer["label"].setValue("Pigment / C0 / C1 / C3 / C4 / C2 — identical source")
+viewer["label"].setValue("Pigment / C0 / C1 / C3 / C4 / C2 / C5 — identical source")
 nuke.scriptSaveAs(os.path.join(OUT, "PigmentPhase4Research.nk"), overwrite=1)
 with open(os.path.join(OUT, "host-validation.json"), "w") as f:
     json.dump({"node":kind,"comparisons":records,"debug_views":required_debug,"macro_copy_sample_error":sample_error,"gate_C":"not accepted"}, f, indent=2)

@@ -608,10 +608,30 @@ void researchRepresentationsAndCache() {
   pigment::Phase4ResearchCache cache;
   pigment::Phase4RenderInputs in{{src.data(),64,b,4},{dst.data(),64,b,4},b,p,{},nullptr,&cache};
   pigment::processPigmentPhase4(in);auto baseline=dst;
-  for(auto mode:{pigment::Phase4Representation::Poisson,pigment::Phase4Representation::RegionalEigen,pigment::Phase4Representation::SparseCurve,pigment::Phase4Representation::SecondMoments}){
+  for(auto mode:{pigment::Phase4Representation::Poisson,pigment::Phase4Representation::RegionalEigen,pigment::Phase4Representation::SparseCurve,pigment::Phase4Representation::SecondMoments,pigment::Phase4Representation::LayeredBroadFields}){
     in.params.phase4.representation=mode;pigment::processPigmentPhase4(in);
     check(dst==baseline,"Every research mode honors zero Y/AB chunk bypass exactly");
   }
+  auto frozenAnalysis=cache.automaticBuilds,frozenHierarchy=cache.hierarchyBuilds;
+  in.params.phase4.lumaChunkScale=1;in.params.phase4.chromaChunkScale=0;
+  pigment::processPigmentPhase4(in);
+  check(bool(cache.layeredBroad),"C5 selector runs the preserved layered prototype");
+  pigment::LayeredBroadOptions options;options.processAB=false;
+  auto isolated=pigment::layeredBroadFields(*cache.supported,*cache.hierarchy,options);
+  for(int i=0;i<cache.supported->count();++i)for(int y=0;y<16;++y)for(int x=0;x<16;++x){
+    auto field=cache.synthesis->plateAppearance[size_t(i)].view(),expected=isolated.appearance[size_t(i)].view();
+    check(field.y.at(x,y)==expected.y.at(x,y) && field.a.at(x,y)==expected.a.at(x,y) && field.b.at(x,y)==expected.b.at(x,y),"C5 integration matches isolated CPU reference and AB bypass");
+  }
+  auto c5Builds=cache.synthesisBuilds;
+  for(int view=int(pigment::PigmentDebugView::Phase4C5BroadTargetY);view<=int(pigment::PigmentDebugView::Phase4C5CombinedAB);++view){
+    in.params.debugView=static_cast<pigment::PigmentDebugView>(view);pigment::processPigmentPhase4(in);
+    for(float v:dst)check(std::isfinite(v),"C5 debug views remain finite");
+    check(cache.synthesisBuilds==c5Builds,"C5 debug edits reuse fitted layers");
+  }
+  check(cache.automaticBuilds==frozenAnalysis && cache.hierarchyBuilds==frozenHierarchy,"C5 selection and diagnostics leave frozen A1-B unchanged");
+  in.params.debugView=pigment::PigmentDebugView::Final;
+  in.params.phase4.lumaChunkScale=0;in.params.phase4.chromaChunkScale=0;
+  pigment::processPigmentPhase4(in);
   auto abuilds=cache.automaticBuilds,hbuilds=cache.hierarchyBuilds,sbuilds=cache.synthesisBuilds;
   in.params.phase4.spillAmount=.8;in.params.phase4.lumaSpill=0;in.params.phase4.spillReach=128;in.params.phase4.plates[0].biasA=.03;
   pigment::processPigmentPhase4(in);
@@ -683,6 +703,12 @@ void interactiveExecution() {
   in.params.phase4.spillAmount=.6f;in.params.phase4.colorInteraction=pigment::ColorInteractionLaw::Density;
   pigment::processPhase4Interactive(in,cache,64);
   check(cache.guidanceBuilds==1 && cache.stages.automaticBuilds==stages,"Interactive downstream edits reuse guidance and source stages");
+  in.params.phase4.representation=pigment::Phase4Representation::LayeredBroadFields;
+  in.params.phase4.spillAmount=0;
+  pigment::processPhase4Interactive(in,cache,64);
+  check(bool(cache.stages.layeredBroad),"Guided C5 executes the existing CPU layered formulation");
+  check(cache.guidanceBuilds==1 && cache.stages.automaticBuilds==stages,"Guided C5 switching reuses frozen source/guidance");
+  for(float v:out)check(std::isfinite(v),"Guided C5 full-size output remains finite");
   pigment::Phase4InteractiveCache separate;in.destination.data=parallel.data();
   pigment::processPhase4Interactive(in,separate,64,{[]{return false;},pigment::boundedParallelRows,nullptr});
   check(out==parallel,"Interactive serial/parallel deterministic parity");

@@ -13,7 +13,7 @@ namespace pigment {
 constexpr int kPhase4LatentCapacity = 24;
 constexpr int kPhase4PlateCapacity = 8;
 // CPU research selectors; C2 is a preserved baseline, not an acceleration target.
-enum class Phase4Representation { Poisson = 0, A3Passthrough, RegionalEigen, SparseCurve, SecondMoments };
+enum class Phase4Representation { Poisson = 0, A3Passthrough, RegionalEigen, SparseCurve, SecondMoments, LayeredBroadFields };
 
 enum class Phase4DebugView {
   Final = 0,

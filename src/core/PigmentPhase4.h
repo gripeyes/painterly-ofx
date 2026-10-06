@@ -5,6 +5,7 @@
 #include "core/RegionHierarchy.h"
 #include "core/ChunkGradientSynthesis.h"
 #include "core/PlateSpill.h"
+#include "core/LayeredBroadFields.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -26,6 +27,8 @@ struct Phase4ResearchCache {
   std::unique_ptr<PublicPlateSet> supported;
   std::unique_ptr<Phase4RegionHierarchy> hierarchy;
   std::unique_ptr<Phase4ChunkSynthesis> synthesis;
+  // Retain C5's actual sublayers/information split for Research inspection.
+  std::unique_ptr<LayeredBroadResult> layeredBroad;
   size_t automaticBuilds=0, hierarchyBuilds=0, synthesisBuilds=0;
   std::vector<double> transportKey;
   std::unique_ptr<Phase4SpillTransport> transport;

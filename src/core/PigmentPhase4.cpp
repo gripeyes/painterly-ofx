@@ -120,6 +120,7 @@ processPigmentPhase4(const Phase4RenderInputs &in,
   const bool rebuildAB=!cache.synthesis || cache.fieldKeyAB!=fieldKeyAB;
   if(!cache.synthesis || cache.synthesisKey!=skey){
     auto next=std::make_unique<Phase4ChunkSynthesis>(b);
+    std::unique_ptr<LayeredBroadResult> layered;
     if(p.phase4.lumaChunkScale==0 && p.phase4.chromaChunkScale==0){
       for(int i=0;i<cache.supported->count();++i){next->plateAppearance.emplace_back(b);auto from=cache.supported->appearance(i);
         auto dst=next->plateAppearance.back().view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){dst.y.at(x,y)=from.y.at(x,y);dst.a.at(x,y)=from.a.at(x,y);dst.b.at(x,y)=from.b.at(x,y);}}
@@ -133,11 +134,23 @@ processPigmentPhase4(const Phase4RenderInputs &in,
     }
     else if(p.phase4.representation==Phase4Representation::RegionalEigen){auto eigen=regionalEigenFieldSweep(*cache.supported,*cache.hierarchy,execution,false,true);next->plateAppearance=std::move(eigen.results.front().appearance);}
     else if(p.phase4.representation==Phase4Representation::SparseCurve){auto curves=sparseTransitionField(*cache.supported,*cache.hierarchy,execution);next->plateAppearance=std::move(curves.appearance);}
+    else if(p.phase4.representation==Phase4Representation::LayeredBroadFields){
+      LayeredBroadOptions options;
+      options.processY=p.phase4.lumaChunkScale!=0;
+      options.processAB=p.phase4.chromaChunkScale!=0;
+      // Canonical prototype observation scales, adapted to the explicitly
+      // selected Guided/proxy analysis geometry. Full scale retains 32/64.
+      const float scale=float(std::sqrt(in.geometry.renderScaleX*in.geometry.renderScaleY));
+      options.observationScaleY*=scale;options.observationScaleAB*=scale;
+      layered=std::make_unique<LayeredBroadResult>(layeredBroadFields(*cache.supported,*cache.hierarchy,options,execution));
+      next->plateAppearance=layered->appearance;
+    }
     else for(int i=0;i<cache.supported->count();++i){next->plateAppearance.emplace_back(b);auto from=cache.supported->appearance(i);auto to=next->plateAppearance.back().view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){to.y.at(x,y)=from.y.at(x,y);to.a.at(x,y)=from.a.at(x,y);to.b.at(x,y)=from.b.at(x,y);}}
     // Zero chunk scale is an exact per-family synthesis bypass in every mode.
     for(int i=0;i<cache.supported->count();++i){auto from=cache.supported->appearance(i);auto to=next->plateAppearance[size_t(i)].view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){if(p.phase4.lumaChunkScale==0)to.y.at(x,y)=from.y.at(x,y);if(p.phase4.chromaChunkScale==0){to.a.at(x,y)=from.a.at(x,y);to.b.at(x,y)=from.b.at(x,y);}}}
     if(execution.cancelled())throw std::runtime_error("Phase 4 synthesis build cancelled");
     for(const auto &plate:next->solver)for(const auto &solver:plate)if(!solver.converged)return {cache.automatic->diagnostics,false};
+    cache.layeredBroad=std::move(layered);
     cache.synthesis=std::move(next);cache.synthesisKey=skey;++cache.synthesisBuilds;
     cache.fieldKeyY=fieldKeyY;cache.fieldKeyAB=fieldKeyAB;cache.fieldBuildsY+=rebuildY;cache.fieldBuildsAB+=rebuildAB;
   }
@@ -206,6 +219,45 @@ processPigmentPhase4(const Phase4RenderInputs &in,
                          x, y);
             bool gray = false, composite = false;
             switch (p.debugView) {
+            case PigmentDebugView::Phase4C5BroadTargetY:
+            case PigmentDebugView::Phase4C5BroadTargetAB:
+            case PigmentDebugView::Phase4C5Structure:
+            case PigmentDebugView::Phase4C5Medium:
+            case PigmentDebugView::Phase4C5Micro:
+            case PigmentDebugView::Phase4C5LayerYMembership:
+            case PigmentDebugView::Phase4C5LayerABMembership:
+            case PigmentDebugView::Phase4C5LayerYField:
+            case PigmentDebugView::Phase4C5LayerABField:
+            case PigmentDebugView::Phase4C5CombinedY:
+            case PigmentDebugView::Phase4C5CombinedAB: {
+              out={0,0,0};gray=true;
+              if(!cache.layeredBroad)break;
+              const auto& c5=*cache.layeredBroad;
+              int i=std::clamp(p.phase4.debugPlate,0,plateCount-1);
+              bool layer=p.debugView>=PigmentDebugView::Phase4C5LayerYMembership && p.debugView<=PigmentDebugView::Phase4C5LayerABField;
+              bool ab=p.debugView==PigmentDebugView::Phase4C5BroadTargetAB || p.debugView==PigmentDebugView::Phase4C5LayerABMembership || p.debugView==PigmentDebugView::Phase4C5LayerABField || p.debugView==PigmentDebugView::Phase4C5CombinedAB;
+              bool membership=p.debugView==PigmentDebugView::Phase4C5LayerYMembership || p.debugView==PigmentDebugView::Phase4C5LayerABMembership;
+              if(layer){
+                int index=0;const BroadSublayer* selected=nullptr;
+                for(const auto& l:c5.layers[size_t(i)])if(l.family==int(ab)){
+                  if(index++==p.phase4.debugLatent){selected=&l;break;}
+                }
+                if(!selected)break; // Missing/unused layer is an explicit zero view.
+                if(membership){out.y=selected->membership.view().at(x,y);break;}
+                out=value(selected->field.view(),x,y);
+              }else{
+                const auto* fields=&c5.broad;
+                if(p.debugView==PigmentDebugView::Phase4C5BroadTargetY || p.debugView==PigmentDebugView::Phase4C5BroadTargetAB)fields=&c5.broadTarget;
+                if(p.debugView==PigmentDebugView::Phase4C5Structure)fields=&c5.structure;
+                if(p.debugView==PigmentDebugView::Phase4C5Medium)fields=&c5.medium;
+                if(p.debugView==PigmentDebugView::Phase4C5Micro)fields=&c5.micro;
+                out=value((*fields)[size_t(i)].view(),x,y);
+              }
+              if(p.debugView==PigmentDebugView::Phase4C5Structure || p.debugView==PigmentDebugView::Phase4C5Medium || p.debugView==PigmentDebugView::Phase4C5Micro){
+                out={.5f+out.y,.5f+out.a,.5f+out.b};gray=false;composite=true;
+              }else if(ab){out.y=source.y;gray=false;}
+              break;
+            }
             case PigmentDebugView::Phase4Source: out=source; break;
             case PigmentDebugView::Phase4PublicReconstruction: {
               out={0,0,0};for(int i=0;i<plateCount;++i){float a=automatic.plates.alpha(i).at(x,y);auto v=plateValue(automatic.plates,i,x,y);out.y+=a*v.y;out.a+=a*v.a;out.b+=a*v.b;}break;

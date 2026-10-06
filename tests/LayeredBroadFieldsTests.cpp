@@ -9,6 +9,7 @@ int main(){try{
     a.a.at(x,y)=.04f*(x-b.x1)/96;a.b.at(x,y)=0;plates.alpha(p).at(x,y)=.25;plates.supportY(p).at(x,y)=plates.supportAB(p).at(x,y)=1;}
   pigment::LayeredBroadOptions o;o.observationScaleY=12;o.observationScaleAB=24;
   auto result=pigment::layeredBroadFields(plates,h,o),repeat=pigment::layeredBroadFields(plates,h,o);
+  require(!result.layers.front().empty(),"fixture exercises fitted broad sublayers");
   auto yOnly=o;yOnly.processAB=false;auto only=pigment::layeredBroadFields(plates,h,yOnly);
   for(int p=0;p<4;++p)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){auto a=result.appearance[size_t(p)].view();
     require(std::isfinite(a.y.at(x,y)),"finite HDR/negative output");require(a.y.at(x,y)==repeat.appearance[size_t(p)].view().y.at(x,y),"deterministic");

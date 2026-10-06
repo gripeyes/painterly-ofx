@@ -1,5 +1,32 @@
 # C5: Layered Broad Fields — pre-implementation design
 
+## Research-node exposure (2026-10-07)
+
+The existing prototype is now available in **Interface → Research → Research
+Representation → C5 Layered Broad Fields (Experimental)**. This exposes the
+preserved formulation; it does not accept Gate C, alter A1–B, or change Pigment's
+default C1 mapping. Existing representation indices 0–4 are unchanged; C5 is
+appended at index 5.
+
+Full Reference runs the CPU prototype. Interactive / Guided uses the existing
+reduced-analysis, full-resolution effect-difference preview; C5 is not Metal-ported.
+Prototype observation scales remain Y 32 / AB 64 canonical pixels (scaled for the
+explicit proxy/Guided analysis grid). Complexity controls remain disabled for C5:
+they belong to C1/C2 and do not secretly change the prototype's fixed layer budget.
+Zero Y/AB Chunk Scale bypasses that family exactly; nonzero scale provides the
+existing retained-structure context, not mandatory chunk reconstruction domains.
+
+For isolation use Linear YAB, Spill 0, and the usual fixed public alpha. Existing
+Pre-Spill and Gradient Reconstruction views inspect the composite and per-plate
+final appearance. New C5 debug views expose broad targets, retained structure,
+medium description, micro residual, combined broad Y/AB, and individual Y/AB
+sublayer memberships/fields. Choose **Debug Plate** (0=A) and **Debug Latent**
+(1-based sublayer within the selected Y/AB family). Missing sublayers display zero.
+Signed residual maps are presentation-only neutral-gray encodings.
+
+The earlier photographic failure evidence below remains authoritative. Hands-on
+exposure is for comparison, not promotion or a new artistic acceptance claim.
+
 Baseline: `564d0b8`. C5 is an isolated CPU experiment, not an accepted
 representation or a change to installed Pigment/Guided defaults.
 
