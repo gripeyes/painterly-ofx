@@ -1,0 +1,84 @@
+version 17.0 v1
+Root {
+ name /Users/j7s/coding/painterly-ofx/tests/visual/PigmentColorInteraction.nk
+ first_frame 1
+ last_frame 1
+}
+Read {
+ inputs 0
+ file /Users/j7s/coding/painterly-ofx/tests/visual/renders/phase4/comparative-pipeline/fashion/source.png
+ name ColorResearchSource
+ xpos 250
+ ypos 0
+}
+Reformat {
+ type "to box"
+ box_width 128
+ box_height 128
+ resize fit
+ name CPUResearchSize
+ label "Prepared / not host-verified. Replace source and assign its working gamut."
+ xpos 250
+ ypos 100
+}
+set source [stack 0]
+OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
+ phase4Representation 1
+ phase4ColorInteraction 0
+ phase4PigmentDensity 0.5
+ phase4SpillAmount 0.8
+ phase4LumaSpill 0.05
+ phase4ChromaSpill 1
+ phase4SpillReach 128
+ amount 1
+ mix 1
+ name LinearYAB
+ label "C0 / identical spatial controls / Linear baseline"
+ xpos 0
+ ypos 250
+}
+set linear [stack 0]
+push $source
+OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
+ phase4Representation 1
+ phase4ColorInteraction 1
+ phase4PigmentDensity 0.5
+ phase4SpillAmount 0.8
+ phase4LumaSpill 0.05
+ phase4ChromaSpill 1
+ phase4SpillReach 128
+ amount 1
+ mix 1
+ name Density
+ label "C0 / nonspectral absorbance comparison"
+ xpos 250
+ ypos 250
+}
+set density [stack 0]
+push $source
+OFXorg.painterlyofx.Pigment_v1 {
+ pigmentInterface 2
+ phase4Representation 1
+ phase4ColorInteraction 2
+ phase4PigmentDensity 0.5
+ phase4SpillAmount 0.8
+ phase4LumaSpill 0.05
+ phase4ChromaSpill 1
+ phase4SpillReach 128
+ amount 1
+ mix 1
+ name SpectralPigment
+ label "C0 / smooth representative reflectance + equal-S K-M\nNot measured pigments or a DRT"
+ xpos 500
+ ypos 250
+}
+push $density
+push $linear
+Viewer {
+ inputs 3
+ name ColorInteractionCompare
+ xpos 250
+ ypos 450
+}

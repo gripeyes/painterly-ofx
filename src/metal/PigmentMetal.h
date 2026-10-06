@@ -2,6 +2,7 @@
 
 #include "core/DetailCollapseResearch.h"
 #include "core/IntegratedPigment.h"
+#include "core/PlateSpill.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -83,6 +84,12 @@ class MetalInstance {
 
   bool render(const MetalExecutionRequest& request);
   bool renderIntegrated(const IntegratedMetalExecutionRequest& request);
+  bool renderPhase4Spill(ConstYabPlanes original,const PublicPlateSet& plates,
+      const Phase4ChunkSynthesis& synthesis,const SparseAffinityGraph& graph,
+      const Phase4Params& params,const Phase4SpillTransport& transport,
+      WorkingGamut gamut,Phase4SpillResult& result);
+  bool renderPhase4Transport(const PublicPlateSet& plates,const SparseAffinityGraph& graph,
+      const Phase4Params& params,Phase4SpillTransport& result,const ExecutionContext& execution={});
   const MetalDiagnostics& diagnostics() const noexcept;
   void releaseTransientResources();
 

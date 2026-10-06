@@ -54,7 +54,15 @@ add_library(pigment_core STATIC
   src/core/Phase4Types.cpp
   src/core/SpectralMattingBasis.cpp
   src/core/LatentPlateGraph.cpp
+  src/core/RegionHierarchy.cpp
+  src/core/ChunkGradientSynthesis.cpp
+  src/core/RegionalEigenField.cpp
+  src/core/SparseTransitionField.cpp
+  src/core/LayeredBroadFields.cpp
+  src/core/PlateSpill.cpp
+  src/core/ColorInteraction.cpp
   src/core/PigmentPhase4.cpp
+  src/core/Phase4Interactive.cpp
   src/core/DetailCollapseResearch.cpp
   src/core/ChromaDiffusion.cpp)
 target_include_directories(pigment_core PUBLIC src)
@@ -102,6 +110,10 @@ if(APPLE AND PIGMENT_ENABLE_METAL)
       COMMAND pigment_metal_harness --verify --warmups 0 --rounds 1)
     set_tests_properties(pigment_metal_smoke PROPERTIES
       ENVIRONMENT "PIGMENT_METAL_RESOURCE_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+    add_executable(pigment_phase4_metal_tests tests/Phase4MetalTests.cpp)
+    target_link_libraries(pigment_phase4_metal_tests PRIVATE pigment_metal pigment_core)
+    add_test(NAME pigment_phase4_metal_tests COMMAND pigment_phase4_metal_tests)
+    set_tests_properties(pigment_phase4_metal_tests PROPERTIES ENVIRONMENT "PIGMENT_METAL_RESOURCE_DIR=${CMAKE_CURRENT_BINARY_DIR}")
   endif()
 endif()
 
@@ -136,9 +148,28 @@ if(BUILD_TESTING)
   add_executable(pigment_phase4_tests tests/PigmentPhase4Tests.cpp)
   target_link_libraries(pigment_phase4_tests PRIVATE pigment_core)
   add_test(NAME pigment_phase4_tests COMMAND pigment_phase4_tests)
+  add_executable(pigment_regional_eigen_tests tests/RegionalEigenFieldTests.cpp)
+  target_link_libraries(pigment_regional_eigen_tests PRIVATE pigment_core)
+  add_test(NAME pigment_regional_eigen_tests COMMAND pigment_regional_eigen_tests)
+  add_executable(pigment_sparse_transition_tests tests/SparseTransitionFieldTests.cpp)
+  target_link_libraries(pigment_sparse_transition_tests PRIVATE pigment_core)
+  add_test(NAME pigment_sparse_transition_tests COMMAND pigment_sparse_transition_tests)
+  add_executable(pigment_spill_diagnostics_tests tests/Phase4SpillDiagnosticsTests.cpp)
+  target_link_libraries(pigment_spill_diagnostics_tests PRIVATE pigment_core)
+  add_test(NAME pigment_spill_diagnostics_tests COMMAND pigment_spill_diagnostics_tests)
+  add_executable(pigment_color_interaction_tests tests/ColorInteractionTests.cpp)
+  target_link_libraries(pigment_color_interaction_tests PRIVATE pigment_core)
+  add_test(NAME pigment_color_interaction_tests COMMAND pigment_color_interaction_tests)
 
   add_executable(pigment_phase4_gate tests/Phase4GateHarness.cpp)
+  add_executable(pigment_layered_broad_tests tests/LayeredBroadFieldsTests.cpp)
+  add_executable(pigment_spectral_continuity tests/SpectralContinuityHarness.cpp)
+  target_link_libraries(pigment_spectral_continuity PRIVATE pigment_core)
+  target_link_libraries(pigment_layered_broad_tests PRIVATE pigment_core)
+  add_test(NAME pigment_layered_broad_tests COMMAND pigment_layered_broad_tests)
   target_link_libraries(pigment_phase4_gate PRIVATE pigment_core)
+  find_package(ZLIB REQUIRED)
+  target_link_libraries(pigment_phase4_gate PRIVATE ZLIB::ZLIB)
 
   add_executable(pigment_backend_benchmark tests/BackendBenchmark.cpp)
   target_link_libraries(pigment_backend_benchmark PRIVATE pigment_core)

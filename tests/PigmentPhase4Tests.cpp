@@ -1,20 +1,733 @@
+#include "core/ChunkGradientSynthesis.h"
 #include "core/LatentPlateGraph.h"
 #include "core/PigmentPhase4.h"
+#include "core/Phase4Interactive.h"
+#include "core/PigmentControls.h"
+#include "core/PlateSpill.h"
+#include "core/RegionHierarchy.h"
+#include "Phase4BarrierAblation.h"
 
 #include <cmath>
 #include <iostream>
 #include <vector>
 
 namespace {
-int failures=0;
-void check(bool v,const char*m){if(!v){++failures;std::cerr<<"FAIL: "<<m<<'\n';}}
-
-pigment::OwnedYabPlanes fixture(pigment::RectI b){pigment::OwnedYabPlanes image(b);auto v=image.view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){float fx=float(x-b.x1)/std::max(1,b.width()-1),fy=float(y-b.y1)/std::max(1,b.height()-1);v.y.at(x,y)=-.3f+2.6f*fx+.07f*std::sin(.7f*x);v.a.at(x,y)=.4f*(fy-.5f)+.08f*std::sin(.3f*x);v.b.at(x,y)=fx<.45f?-.3f:.5f;}return image;}
-
-void parameterSemantics(){pigment::Phase4Params p;p.plateScale=50;p.plateOverlap=0;check(pigment::phase4SupportRadiusY(p)==0&&pigment::phase4SupportRadiusAB(p)==0,"zero overlap has no support expansion");p.plateOverlap=.5f;p.chromaSupportRatio=2;p.lumaChromaCoupling=0;check(std::abs(pigment::phase4SupportRadiusY(p)-25)<1e-6f,"Y support radius is Scale times Overlap");check(std::abs(pigment::phase4SupportRadiusAB(p)-50)<1e-6f,"AB support uses independent support ratio");float before=pigment::phase4SupportRadiusAB(p);p.chromaChunkScale=400;check(std::abs(pigment::phase4SupportRadiusAB(p)-before)<1e-6f,"chunk scale never changes support radius");p.lumaChromaCoupling=1;check(std::abs(pigment::phase4SupportRadiusAB(p)-25)<1e-6f,"full coupling equalizes support radii");check(std::abs(pigment::phase4PlateEntropyCoefficient(.5f)-.25f)<1e-6f,"overlap entropy coefficient is squared");}
-
-void automaticPlates(){pigment::RectI b{0,0,48,36};auto image=fixture(b);pigment::Phase4Params p;p.latentCount=12;p.plateCount=4;p.plateScale=12;p.plateOverlap=.55f;p.lumaChunkScale=8;p.chromaChunkScale=24;auto source=static_cast<const pigment::OwnedYabPlanes&>(image).view();auto result=pigment::buildPhase4AutomaticPlates(source,p,{});check(result.latent.count()<=12&&result.latent.count()>=5&&result.plates.count()==4,"latent count is a useful achieved count bounded by the requested maximum");check(result.diagnostics.requestedLatentCount==12&&result.diagnostics.activeLatentCount==result.latent.count(),"requested and achieved latent counts are reported separately");double reconstruction=0;for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){float ls=0,ps=0;for(int i=0;i<result.latent.count();++i)ls+=result.latent.alpha(i).at(x,y);for(int i=0;i<4;++i)ps+=result.plates.alpha(i).at(x,y);check(std::abs(ls-1)<3e-3f,"latent alpha sums to one");check(std::abs(ps-1)<3e-3f,"plate alpha sums to one");reconstruction+=result.latent.reconstructionError().at(x,y);}check(std::isfinite(reconstruction),"appearance reconstruction is finite");check(result.diagnostics.meanEffectiveComponents>1.0f&&result.diagnostics.componentEffectiveRank>1.0f,"component recovery is fuzzy and has nontrivial rank");check(result.diagnostics.componentOccupancy.size()==size_t(result.latent.count()),"per-component occupancy is reported");for(int row=0;row<result.analysisGraph.nodeCount();++row){double signedSum=0;for(int edge=result.analysisGraph.rowOffsets[row];edge<result.analysisGraph.rowOffsets[row+1];++edge){auto value=result.analysisGraph.edges[edge];signedSum+=value.signedMixtureWeight;check(value.weight>=0&&value.weight<=1,"transport affinity F is nonnegative and bounded");}check(std::abs(signedSum-1)<1e-3,"signed W_CMF rows preserve affine reconstruction");}auto repeated=pigment::buildPhase4AutomaticPlates(source,p,{});check(repeated.latent.count()==result.latent.count(),"progressive recovery active count is deterministic");for(int i=0;i<result.latent.count();++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x)check(repeated.latent.alpha(i).at(x,y)==result.latent.alpha(i).at(x,y),"progressive recovery alpha is deterministic");check(result.diagnostics.eigenspaceFinite&&result.diagnostics.componentsFinite&&result.diagnostics.appearanceFinite,"Gate A diagnostics are finite");}
-
-void renderIdentityAndAlpha(){pigment::RectI b{-2,3,18,17};int stride=b.width()*4+3;std::vector<float>src(size_t(stride)*b.height(),-5),dst(src.size(),-9);for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){size_t i=size_t(y-b.y1)*stride+(x-b.x1)*4;float a=.2f+.8f*float((x+y+20)%9)/8;src[i]=a*(.1f+.03f*x);src[i+1]=a*(-.2f+.04f*y);src[i+2]=a*((x%5)?0.3f:2.0f);src[i+3]=a;}pigment::IntegratedPigmentParams p;p.comparison=pigment::PigmentComparisonMode::AutomaticPlateGraph;p.premultiplied=true;p.phase4.latentCount=12;p.phase4.plateCount=4;p.phase4.plateScale=8;p.amount=0;pigment::Phase4RenderInputs in{{src.data(),stride,b,4},{dst.data(),stride,b,4},b,p,{}};pigment::processPigmentPhase4(in);for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){size_t i=size_t(y-b.y1)*stride+(x-b.x1)*4;for(int c=0;c<4;++c)check(dst[i+c]==src[i+c],"Amount zero is bit-exact and preserves alpha");}}
+int failures = 0;
+void check(bool v, const char *m) {
+  if (!v) {
+    ++failures;
+    std::cerr << "FAIL: " << m << '\n';
+  }
 }
-int main(){parameterSemantics();automaticPlates();renderIdentityAndAlpha();if(failures)return 1;std::cout<<"All Phase 4 Gate-A tests passed\n";}
+
+pigment::OwnedYabPlanes fixture(pigment::RectI b) {
+  pigment::OwnedYabPlanes image(b);
+  auto v = image.view();
+  for (int y = b.y1; y < b.y2; ++y)
+    for (int x = b.x1; x < b.x2; ++x) {
+      float fx = float(x - b.x1) / std::max(1, b.width() - 1),
+            fy = float(y - b.y1) / std::max(1, b.height() - 1);
+      v.y.at(x, y) = -.3f + 2.6f * fx + .07f * std::sin(.7f * x);
+      v.a.at(x, y) = .4f * (fy - .5f) + .08f * std::sin(.3f * x);
+      v.b.at(x, y) = fx < .45f ? -.3f : .5f;
+    }
+  return image;
+}
+
+void artistControlMapping() {
+  pigment::PigmentControls c;
+  pigment::Phase4Params expert;expert.plateCount=8;expert.latentCount=14;expert.plates[0].biasA=.2f;
+  auto p=pigment::mapPigmentControls(c,expert);
+  check(p.plateCount==8 && p.latentCount==14 && p.plates[0].biasA==.2f,"Artist mapping preserves expert vocabulary and overrides");
+  check(p.representation==pigment::Phase4Representation::Poisson,"Artist complexity uses C1 field semantics");
+  c.pictorialScale*=2;auto large=pigment::mapPigmentControls(c);
+  check(large.plateScale==2*p.plateScale && large.lumaChunkScale==2*p.lumaChunkScale && large.chromaChunkScale==2*p.chromaChunkScale,"Pictorial Scale coordinates vocabulary and independent hierarchy cuts");
+  c.lumaOrganization=c.chromaOrganization=0;auto zero=pigment::mapPigmentControls(c);
+  check(zero.lumaChunkScale==0 && zero.chromaChunkScale==0 && zero.lumaSpill==0 && zero.chromaSpill==0,"Zero organization bypasses each field and its interaction");
+  check(pigment::phase4SupportRadiusAB(zero)==pigment::phase4SupportRadiusAB(large),"Organization cannot silently change support extent");
+  c.chromaSpread=1;auto spread=pigment::mapPigmentControls(c);
+  check(pigment::phase4SupportRadiusAB(spread)>pigment::phase4SupportRadiusAB(zero) && spread.lumaChunkScale==zero.lumaChunkScale && spread.yGradientComplexity==zero.yGradientComplexity,"Chroma Spread broadens AB independently from Y organization");
+  c.structureLock=1;auto locked=pigment::mapPigmentControls(c);
+  check(locked.boundaryLock>spread.boundaryLock && locked.mergeSelectivity>spread.mergeSelectivity && locked.internalVariation<spread.internalVariation && locked.structureRespect>spread.structureRespect,"Structure Lock coordinates boundary selectivity and transport");
+  c.pictorialScale=-10;c.spillReach=1000;c.lumaComplexity=-1;c.chromaComplexity=2;
+  auto bounded=pigment::mapPigmentControls(c);
+  check(bounded.plateScale==4 && bounded.spillReach==256 && bounded.yGradientComplexity==0 && bounded.abGradientComplexity==1,"Artist mapping clamps research domain predictably");
+}
+
+void parameterSemantics() {
+  pigment::Phase4Params p;
+  p.plateScale = 50;
+  p.plateOverlap = 0;
+  check(pigment::phase4SupportRadiusY(p) == 0 &&
+            pigment::phase4SupportRadiusAB(p) == 0,
+        "zero overlap has no support expansion");
+  p.plateOverlap = .5f;
+  p.chromaSupportRatio = 2;
+  p.lumaChromaCoupling = 0;
+  check(std::abs(pigment::phase4SupportRadiusY(p) - 25) < 1e-6f,
+        "Y support radius is Scale times Overlap");
+  check(std::abs(pigment::phase4SupportRadiusAB(p) - 50) < 1e-6f,
+        "AB support uses independent support ratio");
+  float before = pigment::phase4SupportRadiusAB(p);
+  p.chromaChunkScale = 400;
+  check(std::abs(pigment::phase4SupportRadiusAB(p) - before) < 1e-6f,
+        "chunk scale never changes support radius");
+  p.lumaChromaCoupling = 1;
+  check(std::abs(pigment::phase4SupportRadiusAB(p) - 25) < 1e-6f,
+        "full coupling equalizes support radii");
+  check(std::abs(pigment::phase4PlateEntropyCoefficient(.5f) - .25f) < 1e-6f,
+        "overlap entropy coefficient is squared");
+}
+
+void automaticPlates() {
+  pigment::RectI b{0, 0, 48, 36};
+  auto image = fixture(b);
+  pigment::Phase4Params p;
+  p.latentCount = 12;
+  p.plateCount = 4;
+  p.plateScale = 12;
+  p.plateOverlap = .55f;
+  p.lumaChunkScale = 8;
+  p.chromaChunkScale = 24;
+  auto source = static_cast<const pigment::OwnedYabPlanes &>(image).view();
+  auto result = pigment::buildPhase4AutomaticPlates(source, p, {});
+  check(result.latent.count() <= 12 && result.latent.count() >= 5 &&
+            result.plates.count() == 4,
+        "latent count is a useful achieved count bounded by the requested "
+        "maximum");
+  check(result.diagnostics.requestedLatentCount == 12 &&
+            result.diagnostics.activeLatentCount == result.latent.count(),
+        "requested and achieved latent counts are reported separately");
+  double reconstruction = 0;
+  for (int y = b.y1; y < b.y2; ++y)
+    for (int x = b.x1; x < b.x2; ++x) {
+      float ls = 0, ps = 0;
+      for (int i = 0; i < result.latent.count(); ++i)
+        ls += result.latent.alpha(i).at(x, y);
+      for (int i = 0; i < 4; ++i)
+        ps += result.plates.alpha(i).at(x, y);
+      check(std::abs(ls - 1) < 3e-3f, "latent alpha sums to one");
+      check(std::abs(ps - 1) < 3e-3f, "plate alpha sums to one");
+      reconstruction += result.latent.reconstructionError().at(x, y);
+    }
+  check(std::isfinite(reconstruction), "appearance reconstruction is finite");
+  check(result.diagnostics.meanEffectiveComponents > 1.0f &&
+            result.diagnostics.componentEffectiveRank > 1.0f,
+        "component recovery is fuzzy and has nontrivial rank");
+  check(result.diagnostics.appearanceUnmixingError < 1e-4f &&
+            result.diagnostics.appearanceSpatialVariation > 1e-4f,
+        "A3 appearance is spatially varying and reconstructive");
+  check(result.diagnostics.fullResolutionReconstructionError < 1e-5f,
+        "full-resolution conditional color refinement preserves source reconstruction");
+  const auto &distributions = result.latent.distributions();
+  check(distributions.components.size() == size_t(result.latent.count()) &&
+        distributions.width > 1 && distributions.height > 1,
+        "latent local Gaussian distributions remain stored after unmixing");
+  for(const auto &component : distributions.components) for(const auto &d : component) {
+    check(d.covariance[0]>0 && d.covariance[4]>0 && d.covariance[8]>0,
+          "conditional color covariance has positive conditioning");
+    check(std::abs(d.covariance[1]-d.covariance[3])<1e-12 &&
+          std::abs(d.covariance[2]-d.covariance[6])<1e-12,
+          "retained local covariance is symmetric");
+  }
+  check(result.diagnostics.publicReconstructionError < 1e-4f &&
+            result.diagnostics.publicPlateEffectiveRank > 1.1f &&
+            result.diagnostics.maximumPublicPlateCorrelation < 0.999f,
+        "public plates reconstruct while preserving distinct ownership");
+  check(result.diagnostics.componentOccupancy.size() ==
+            size_t(result.latent.count()),
+        "per-component occupancy is reported");
+  for (int row = 0; row < result.analysisGraph.nodeCount(); ++row) {
+    double signedSum = 0;
+    for (int edge = result.analysisGraph.rowOffsets[row];
+         edge < result.analysisGraph.rowOffsets[row + 1]; ++edge) {
+      auto value = result.analysisGraph.edges[edge];
+      signedSum += value.signedMixtureWeight;
+      check(value.weight >= 0 && value.weight <= 1,
+            "transport affinity F is nonnegative and bounded");
+    }
+    check(std::abs(signedSum - 1) < 1e-3,
+          "signed W_CMF rows preserve affine reconstruction");
+  }
+  auto repeated = pigment::buildPhase4AutomaticPlates(source, p, {});
+  check(repeated.latent.count() == result.latent.count(),
+        "progressive recovery active count is deterministic");
+  for (int i = 0; i < result.latent.count(); ++i)
+    for (int y = b.y1; y < b.y2; ++y)
+      for (int x = b.x1; x < b.x2; ++x)
+        check(repeated.latent.alpha(i).at(x, y) ==
+                  result.latent.alpha(i).at(x, y),
+              "progressive recovery alpha is deterministic");
+  check(result.diagnostics.eigenspaceFinite &&
+            result.diagnostics.componentsFinite &&
+            result.diagnostics.appearanceFinite,
+        "Gate A diagnostics are finite");
+}
+
+void regionHierarchy() {
+  pigment::RectI bounds{0, 0, 64, 40};
+  auto image = fixture(bounds);
+  auto source = static_cast<const pigment::OwnedYabPlanes &>(image).view();
+  pigment::Phase4Params parameters;
+  parameters.latentCount = 12;
+  parameters.plateCount = 4;
+  parameters.lumaChunkScale = 0;
+  parameters.chromaChunkScale = 0;
+  auto automatic = pigment::buildPhase4AutomaticPlates(source, parameters, {});
+  auto zero =
+      pigment::buildPhase4RegionHierarchy(source, automatic.plates, parameters);
+  check(zero.atomicRegionCount > 1, "shared atomic source RAG has regions");
+  for (const auto &plate : zero.plates) {
+    check(plate.yChunkCount == zero.atomicRegionCount &&
+              plate.abChunkCount == zero.atomicRegionCount,
+          "Chunk Scale zero is an exact atomic-hierarchy cut");
+  }
+  parameters.lumaChunkScale = 48;
+  parameters.chromaChunkScale = 96;
+  auto merged =
+      pigment::buildPhase4RegionHierarchy(source, automatic.plates, parameters);
+  auto recut=zero;pigment::cutPhase4RegionHierarchy(recut,48,96);
+  auto parallel=pigment::buildPhase4RegionHierarchy(source,automatic.plates,parameters,{[]{return false;},pigment::boundedParallelRows,nullptr});
+  for(size_t i=0;i<merged.plates.size();++i){
+    check(recut.plates[i].yChunk==merged.plates[i].yChunk && recut.plates[i].abChunk==merged.plates[i].abChunk,"Cached hierarchy recut equals full rebuild bit-exactly");
+    check(parallel.plates[i].yChunk==merged.plates[i].yChunk && parallel.plates[i].abChunk==merged.plates[i].abChunk,"Independent parallel plate hierarchies match serial reference");
+  }
+  for (size_t plate = 0; plate < merged.plates.size(); ++plate) {
+    check(merged.plates[plate].yChunkCount <= zero.plates[plate].yChunkCount &&
+              merged.plates[plate].abChunkCount <=
+                  zero.plates[plate].abChunkCount,
+          "higher chunk cuts merge regions monotonically");
+    const auto &h=merged.plates[plate];
+    check(h.yTree.size()==zero.plates[plate].yTree.size(),
+          "Chunk Scale only cuts the existing tree");
+    for(size_t node=0;node<h.yTree.size();++node) {
+      const auto &n=h.yTree[node];
+      check(n.left==zero.plates[plate].yTree[node].left &&
+            n.right==zero.plates[plate].yTree[node].right &&
+            n.level==zero.plates[plate].yTree[node].level,
+            "scale changes preserve merge topology and disappearance levels");
+      if(n.left>=0) check(n.level>=h.yTree[size_t(n.left)].level &&
+                         n.level>=h.yTree[size_t(n.right)].level,
+                         "merge levels are nested and monotonic");
+    }
+    for(int y=0;y<bounds.height();++y) for(int x=0;x<bounds.width();++x) {
+      size_t p=size_t(y)*bounds.width()+x;
+      if(x+1==bounds.width()) check(std::isinf(h.yEdgeX[p]),"RoD grid edge has infinite level");
+      else if(merged.atomicRegion[p]==merged.atomicRegion[p+1])
+        check(h.yEdgeX[p]==0,"same-atomic-region edge has zero level");
+      else check((h.yEdgeX[p]<=parameters.lumaChunkScale)==(h.yChunk[p]==h.yChunk[p+1]),
+                 "LCA edge level agrees with the hierarchy cut");
+    }
+  }
+  bool conditioned = false;
+  for (size_t plate = 1; plate < merged.plates.size(); ++plate)
+    conditioned |= merged.plates[plate].yChunk != merged.plates[0].yChunk ||
+                   merged.plates[plate].abChunk != merged.plates[0].abChunk;
+  check(conditioned, "chunk hierarchies are conditioned per public plate");
+
+  auto synthesis = pigment::synthesizePhase4Chunks(source, automatic.plates,
+                                                   merged, parameters);
+  auto parallelSynthesis=pigment::synthesizePhase4Chunks(source,automatic.plates,merged,parameters,
+      {[]{return false;},pigment::boundedParallelRows,nullptr});
+  for(int i=0;i<automatic.plates.count();++i){auto a=synthesis.plateAppearance[i].view(),c=parallelSynthesis.plateAppearance[i].view();
+    for(int y=bounds.y1;y<bounds.y2;++y)for(int x=bounds.x1;x<bounds.x2;++x)
+      check(a.y.at(x,y)==c.y.at(x,y) && a.a.at(x,y)==c.a.at(x,y) && a.b.at(x,y)==c.b.at(x,y),"Parallel plate bounded solves are bit-exact");}
+  auto serialTransport=pigment::preparePhase4SpillTransport(automatic.plates,automatic.analysisGraph,parameters);
+  auto parallelTransport=pigment::preparePhase4SpillTransport(automatic.plates,automatic.analysisGraph,parameters,
+      {[]{return false;},pigment::boundedParallelRows,nullptr});
+  check(serialTransport.y==parallelTransport.y && serialTransport.ab==parallelTransport.ab,"Parallel independent directed transport is bit-exact");
+  auto changedY=parameters;changedY.yGradientComplexity=.72f;
+  auto partial=pigment::synthesizePhase4Chunks(source,automatic.plates,merged,changedY,{}, {},&synthesis,true,false);
+  auto full=pigment::synthesizePhase4Chunks(source,automatic.plates,merged,changedY);
+  for(int i=0;i<automatic.plates.count();++i){auto a=partial.plateAppearance[i].view(),c=full.plateAppearance[i].view();
+    for(int y=bounds.y1;y<bounds.y2;++y)for(int x=bounds.x1;x<bounds.x2;++x)
+      check(a.y.at(x,y)==c.y.at(x,y) && a.a.at(x,y)==c.a.at(x,y) && a.b.at(x,y)==c.b.at(x,y),"Independent Y field rebuild equals full reference bit exactly");}
+  bool changed = false;
+  for (int plate = 0; plate < automatic.plates.count(); ++plate) {
+    auto before = automatic.plates.appearance(plate);
+    auto after = static_cast<const pigment::OwnedYabPlanes &>(
+                     synthesis.plateAppearance[size_t(plate)])
+                     .view();
+    for (int y = bounds.y1; y < bounds.y2; ++y)
+      for (int x = bounds.x1; x < bounds.x2; ++x) {
+        check(std::isfinite(after.y.at(x, y)) &&
+                  std::isfinite(after.a.at(x, y)) &&
+                  std::isfinite(after.b.at(x, y)),
+              "chunk synthesis remains finite");
+        changed |= std::abs(after.y.at(x, y) - before.y.at(x, y)) > 1e-5f;
+      }
+  }
+  check(changed, "nonzero Chunk Scale synthesizes plate appearance");
+  for(const auto &plate:synthesis.solver) for(const auto &solver:plate)
+    check(solver.converged && solver.relativeResidual<=1e-5,
+          "true bounded Poisson residual satisfies the specified tolerance");
+  for(int plate=0;plate<automatic.plates.count();++plate) {
+    auto before=automatic.plates.appearance(plate);
+    auto after=static_cast<const pigment::OwnedYabPlanes &>(synthesis.plateAppearance[size_t(plate)]).view();
+    const auto &h=merged.plates[size_t(plate)];
+    for(int y=bounds.y1;y<bounds.y2;++y) for(int x=bounds.x1;x<bounds.x2;++x) {
+      bool boundary=h.yRetainedBoundaries.view().at(x,y)>0 ||
+                    x==bounds.x1 || x+1==bounds.x2 || y==bounds.y1 || y+1==bounds.y2;
+      if(boundary || automatic.plates.supportY(plate).at(x,y)<.02f)
+        check(after.y.at(x,y)==before.y.at(x,y),"retained and unsupported values are bit-exact constraints");
+    }
+  }
+
+  parameters.spillAmount = 0;
+  auto completeParams = parameters;
+  completeParams.gradientComplexity = 1;
+  auto complete = pigment::synthesizePhase4Chunks(source, automatic.plates,
+                                                  merged, completeParams);
+  for(int plate=0;plate<automatic.plates.count();++plate) {
+    auto before=automatic.plates.appearance(plate);
+    auto after=static_cast<const pigment::OwnedYabPlanes &>(complete.plateAppearance[size_t(plate)]).view();
+    for(int y=bounds.y1;y<bounds.y2;++y) for(int x=bounds.x1;x<bounds.x2;++x)
+      check(before.y.at(x,y)==after.y.at(x,y) && before.a.at(x,y)==after.a.at(x,y) &&
+            before.b.at(x,y)==after.b.at(x,y),
+            "full Gradient Complexity preserves automatic appearance bit-exactly");
+  }
+  auto noSpill = pigment::applyPhase4Spill(source, automatic.plates, synthesis,
+                                           automatic.analysisGraph, parameters);
+  parameters.spillAmount = .8f;
+  parameters.lumaSpill = .05f;
+  parameters.chromaSpill = 1.0f;
+  auto spill = pigment::applyPhase4Spill(source, automatic.plates, synthesis,
+                                         automatic.analysisGraph, parameters);
+  double yChange = 0, abChange = 0;
+  auto noSpillView =
+      static_cast<const pigment::OwnedYabPlanes &>(noSpill.composite).view();
+  auto spillView =
+      static_cast<const pigment::OwnedYabPlanes &>(spill.composite).view();
+  for (int y = bounds.y1; y < bounds.y2; ++y)
+    for (int x = bounds.x1; x < bounds.x2; ++x) {
+      yChange += std::abs(spillView.y.at(x, y) - noSpillView.y.at(x, y));
+      abChange += std::hypot(spillView.a.at(x, y) - noSpillView.a.at(x, y),
+                             spillView.b.at(x, y) - noSpillView.b.at(x, y));
+    }
+  check(abChange > yChange,
+        "directed Spill can reorganize AB more strongly than Y");
+  auto disabled=parameters;
+  for(auto &control:disabled.plates) control.weight=0;
+  auto noOwnership=pigment::applyPhase4Spill(source,automatic.plates,synthesis,
+                                             automatic.analysisGraph,disabled);
+  auto returned=static_cast<const pigment::OwnedYabPlanes &>(noOwnership.composite).view();
+  for(int y=bounds.y1;y<bounds.y2;++y) for(int x=bounds.x1;x<bounds.x2;++x)
+    check(returned.y.at(x,y)==source.y.at(x,y) && returned.a.at(x,y)==source.a.at(x,y) &&
+          returned.b.at(x,y)==source.b.at(x,y),"zero artist ownership returns original source exactly");
+
+  parameters.lumaChunkScale = 0;
+  parameters.chromaChunkScale = 0;
+  auto bypassHierarchy =
+      pigment::buildPhase4RegionHierarchy(source, automatic.plates, parameters);
+  auto bypass = pigment::synthesizePhase4Chunks(source, automatic.plates,
+                                                bypassHierarchy, parameters);
+  for (int plate = 0; plate < automatic.plates.count(); ++plate) {
+    auto before = automatic.plates.appearance(plate);
+    auto after = static_cast<const pigment::OwnedYabPlanes &>(
+                     bypass.plateAppearance[size_t(plate)])
+                     .view();
+    for (int y = bounds.y1; y < bounds.y2; ++y)
+      for (int x = bounds.x1; x < bounds.x2; ++x)
+        check(after.y.at(x, y) == before.y.at(x, y) &&
+                  after.a.at(x, y) == before.a.at(x, y) &&
+                  after.b.at(x, y) == before.b.at(x, y),
+              "Chunk Scale zero is a bit-exact synthesis bypass");
+  }
+}
+
+void primitiveGradientSurvival() {
+  // An accepted affine hypothesis must not erase the source residual.  All
+  // interior edges here have ell=0, so the approved survival gain is exactly C.
+  pigment::RectI bounds{0,0,32,32};
+  pigment::OwnedYabPlanes image(bounds);
+  pigment::PublicPlateSet plates(bounds,4);
+  pigment::Phase4RegionHierarchy hierarchy;
+  hierarchy.bounds=bounds;
+  hierarchy.atomicRegion.assign(32*32,0);
+  hierarchy.atomicRegionCount=1;
+  for(int i=0;i<4;++i) {
+    hierarchy.plates.emplace_back(bounds);
+    auto &h=hierarchy.plates.back();
+    h.yChunk.assign(32*32,0);h.abChunk=h.yChunk;
+    h.yChunkCount=h.abChunkCount=1;
+    h.yEdgeX.assign(32*32,0);h.yEdgeY=h.yEdgeX;
+    h.abEdgeX=h.yEdgeX;h.abEdgeY=h.yEdgeX;
+    auto value=plates.appearance(i);
+    for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
+      float v=.5f+.01f*x+(((x+y)&1)?-.0002f:.0002f);
+      image.view().y.at(x,y)=value.y.at(x,y)=v;
+      value.a.at(x,y)=value.b.at(x,y)=0;
+      plates.alpha(i).at(x,y)=.25f;
+      plates.supportY(i).at(x,y)=plates.supportAB(i).at(x,y)=1;
+    }
+  }
+  pigment::Phase4Params params;
+  params.gradientComplexity=.35f;
+  auto source=static_cast<const pigment::OwnedYabPlanes &>(image).view();
+  auto result=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  auto reconstructed=static_cast<const pigment::OwnedYabPlanes &>(result.plateAppearance[0]).view();
+  double originalResidual=0,retainedResidual=0;
+  for(int y=8;y<24;++y) for(int x=8;x<24;++x) {
+    double sign=((x+y)&1)?-1:1;
+    originalResidual+=sign*(source.y.at(x,y)-(.5+.01*x));
+    retainedResidual+=sign*(reconstructed.y.at(x,y)-(.5+.01*x));
+  }
+  check(std::abs(retainedResidual/originalResidual-.35)<.02,
+        "accepted affine candidate retains Complexity fraction of fine gradients");
+  check(result.primitiveSelection[0].view().at(16,16)>0 &&
+        result.primitiveSelection[0].view().at(16,16)<.5f,
+        "gradient-survival fixture actually selects an affine candidate");
+  // Channel controls must change their own field, not the other family.
+  for(int i=0;i<4;++i)for(int y=0;y<32;++y)for(int x=0;x<32;++x){
+    float v=.1f+.005f*x+(((x+y)&1)?-.0002f:.0002f);
+    plates.appearance(i).a.at(x,y)=image.view().a.at(x,y)=v;
+    plates.appearance(i).b.at(x,y)=image.view().b.at(x,y)=-v;
+  }
+  auto legacy=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  params.yGradientComplexity=params.abGradientComplexity=params.gradientComplexity;
+  auto split=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  params.yGradientComplexity=1;
+  auto yChanged=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  params.yGradientComplexity=.35f;params.abGradientComplexity=1;
+  auto abChanged=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  bool dy=false,dab=false;
+  auto lv=legacy.plateAppearance[0].view(),sv=split.plateAppearance[0].view(),yv=yChanged.plateAppearance[0].view(),av=abChanged.plateAppearance[0].view();
+  for(int y=0;y<32;++y)for(int x=0;x<32;++x){
+    check(lv.y.at(x,y)==sv.y.at(x,y) && lv.a.at(x,y)==sv.a.at(x,y) && lv.b.at(x,y)==sv.b.at(x,y),"Explicit equal complexities preserve legacy output exactly");
+    check(yv.a.at(x,y)==sv.a.at(x,y) && yv.b.at(x,y)==sv.b.at(x,y),"Y complexity leaves AB bit exact");
+    check(av.y.at(x,y)==sv.y.at(x,y),"AB complexity leaves Y bit exact");
+    dy|=yv.y.at(x,y)!=sv.y.at(x,y);dab|=av.a.at(x,y)!=sv.a.at(x,y);
+  }
+  check(dy && dab,"Independent complexities materially affect their own fields");
+  params.yGradientComplexity=params.abGradientComplexity=-1;
+  for(int i=0;i<4;++i) for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
+    float v=.5f+(((x+y)&1)?-.0002f:.0002f);
+    image.view().y.at(x,y)=plates.appearance(i).y.at(x,y)=v;
+  }
+  auto flat=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params);
+  check(flat.primitiveSelection[0].view().at(16,16)==0,
+        "a flat broad field can qualify as solid despite fine oscillation");
+  auto flatResult=static_cast<const pigment::OwnedYabPlanes &>(flat.plateAppearance[0]).view();
+  double flatResidual=0;
+  for(int y=8;y<24;++y) for(int x=8;x<24;++x)
+    flatResidual+=(((x+y)&1)?-1:1)*(flatResult.y.at(x,y)-.5f);
+  check(std::abs(flatResidual/originalResidual-.35)<.02,
+        "solid qualification changes analysis only, not approved gradient survival");
+}
+
+void interiorBroadForm() {
+  pigment::RectI bounds{0,0,96,96};
+  pigment::OwnedYabPlanes image(bounds);
+  pigment::PublicPlateSet plates(bounds,4);
+  pigment::Phase4RegionHierarchy hierarchy;
+  hierarchy.bounds=bounds;
+  hierarchy.atomicRegion.assign(96*96,0);
+  hierarchy.atomicRegionCount=1;
+  std::vector<float> form(96*96);
+  constexpr double pi=3.141592653589793;
+  for(int i=0;i<4;++i) {
+    hierarchy.plates.emplace_back(bounds);
+    auto &h=hierarchy.plates.back();
+    h.yChunk.assign(96*96,0);h.abChunk=h.yChunk;
+    h.yChunkCount=h.abChunkCount=1;
+    h.yEdgeX.assign(96*96,0);h.yEdgeY=h.yEdgeX;
+    h.abEdgeX=h.yEdgeX;h.abEdgeY=h.yEdgeX;
+    auto app=plates.appearance(i);
+    for(int y=0;y<96;++y) for(int x=0;x<96;++x) {
+      double fx=x/95.0,fy=y/95.0;
+      float broad=float(-.7+2.6*std::sin(pi*fx)*std::sin(pi*fy)+
+                       .7*std::sin(2*pi*fx)*std::sin(pi*fy));
+      form[size_t(y)*96+x]=broad;
+      float value=broad+(((x+y)&1)?-.02f:.02f)+.015f*std::sin(float(2*pi*x/9));
+      image.view().y.at(x,y)=app.y.at(x,y)=value;
+      app.a.at(x,y)=app.b.at(x,y)=0;
+      plates.alpha(i).at(x,y)=.25f;
+      plates.supportY(i).at(x,y)=plates.supportAB(i).at(x,y)=1;
+    }
+  }
+  pigment::Phase4Params params;
+  params.gradientComplexity=.05f;
+  auto source=static_cast<const pigment::OwnedYabPlanes &>(image).view();
+  pigment::Phase4BroadFormOptions disabled;disabled.enabled=false;
+  auto baseline=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},disabled);
+  pigment::Phase4BroadFormOptions enabled;enabled.enabled=true;
+  auto constrained=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},enabled);
+  auto b=static_cast<const pigment::OwnedYabPlanes &>(baseline.plateAppearance[0]).view();
+  auto c=static_cast<const pigment::OwnedYabPlanes &>(constrained.plateAppearance[0]).view();
+  double oldError=0,newError=0,oldTexture=0,newTexture=0;
+  for(int y=16;y<80;++y) for(int x=16;x<80;++x) {
+    float reference=form[size_t(y)*96+x];
+    oldError+=std::pow(b.y.at(x,y)-reference,2);
+    newError+=std::pow(c.y.at(x,y)-reference,2);
+    // Second differences distinguish known analytical broad form from texture.
+    double exact=form[size_t(y)*96+x-1]-2*reference+form[size_t(y)*96+x+1];
+    oldTexture+=std::pow(source.y.at(x-1,y)-2*source.y.at(x,y)+source.y.at(x+1,y)-exact,2);
+    newTexture+=std::pow(c.y.at(x-1,y)-2*c.y.at(x,y)+c.y.at(x+1,y)-exact,2);
+    check(c.a.at(x,y)==0 && c.b.at(x,y)==0,"interior constraints preserve neutral AB");
+  }
+  check(newError<.65*oldError,"regional interior constraints improve curved broad form at strong simplification");
+  check(newTexture<.1*oldTexture,"broad constraints do not restore oscillatory source description");
+  check(constrained.solver[0][0].broadConstraints>0 &&
+        constrained.solver[0][0].converged,
+        "interior moment constraints participate in converged bounded solve");
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    if(x==0 || y==0 || x==95 || y==95)
+      check(c.y.at(x,y)==source.y.at(x,y),"interior moments leave retained contour values bit-exact");
+  auto onlyY=pigment::Phase4BroadFormOptions{};
+  onlyY.enabled=true;
+  onlyY.strengthY*=2;
+  auto changed=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},onlyY);
+  auto next=static_cast<const pigment::OwnedYabPlanes &>(changed.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    check(next.a.at(x,y)==c.a.at(x,y) && next.b.at(x,y)==c.b.at(x,y),
+          "Y interior constraint strength does not alter AB reconstruction");
+  auto repeat=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},enabled);
+  auto repeated=static_cast<const pigment::OwnedYabPlanes &>(repeat.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    check(repeated.y.at(x,y)==c.y.at(x,y),"interior constraint sites and solve are deterministic");
+  auto first=enabled;first.firstStrengthY=20;first.firstStrengthAB=2.5;
+  auto directional=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},first);
+  auto d=static_cast<const pigment::OwnedYabPlanes &>(directional.plateAppearance[0]).view();
+  check(directional.solver[0][0].firstConstraints>0 && directional.solver[0][0].converged,
+        "supported first moments participate without primitive-fit qualification");
+  double meanDirectionError=0,firstDirectionError=0;
+  for(int y=24;y<72;++y) for(int x=24;x<72;++x) {
+    double target=form[size_t(y)*96+x+8]-form[size_t(y)*96+x-8];
+    meanDirectionError+=std::pow(c.y.at(x+8,y)-c.y.at(x-8,y)-target,2);
+    firstDirectionError+=std::pow(d.y.at(x+8,y)-d.y.at(x-8,y)-target,2);
+    check(d.a.at(x,y)==0 && d.b.at(x,y)==0,"first moments preserve neutral chroma");
+  }
+  check(firstDirectionError<meanDirectionError,"first moments improve broad long-chord direction fixture");
+  auto second=first;second.secondStrengthY=20;second.secondStrengthAB=1.25;
+  auto curved=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},second);
+  auto q=static_cast<const pigment::OwnedYabPlanes &>(curved.plateAppearance[0]).view();
+  check(curved.solver[0][0].secondConstraints>0 && curved.solver[0][0].converged,
+        "supported second-order statistics participate in bounded solve");
+  double firstCurvatureError=0,secondCurvatureError=0;
+  for(int y=24;y<72;++y) for(int x=24;x<72;++x) {
+    double target=form[size_t(y)*96+x+8]-2*form[size_t(y)*96+x]+form[size_t(y)*96+x-8];
+    firstCurvatureError+=std::pow(d.y.at(x+8,y)-2*d.y.at(x,y)+d.y.at(x-8,y)-target,2);
+    secondCurvatureError+=std::pow(q.y.at(x+8,y)-2*q.y.at(x,y)+q.y.at(x-8,y)-target,2);
+  }
+  check(secondCurvatureError<firstCurvatureError,"second moments improve broad curvature fixture without a replacement field");
+  auto secondAgain=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},second);
+  auto qa=static_cast<const pigment::OwnedYabPlanes &>(secondAgain.plateAppearance[0]).view();
+  auto secondY=second;secondY.secondStrengthY*=2;
+  auto secondIndependent=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},secondY);
+  auto qi=static_cast<const pigment::OwnedYabPlanes &>(secondIndependent.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x) {
+    check(q.y.at(x,y)==qa.y.at(x,y) && std::isfinite(q.y.at(x,y)),"second-order solve is finite and deterministic");
+    check(q.a.at(x,y)==qi.a.at(x,y) && q.b.at(x,y)==qi.b.at(x,y),"Y curvature strength leaves AB unchanged");
+    if(x==0 || y==0 || x==95 || y==95)
+      check(q.y.at(x,y)==source.y.at(x,y),"second-order moments leave retained contours exact");
+  }
+  auto firstRepeat=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},first);
+  auto dr=static_cast<const pigment::OwnedYabPlanes &>(firstRepeat.plateAppearance[0]).view();
+  auto changedFirst=first;changedFirst.firstStrengthY*=2;
+  auto independent=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},changedFirst);
+  auto di=static_cast<const pigment::OwnedYabPlanes &>(independent.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+  {
+    check(dr.y.at(x,y)==d.y.at(x,y),"first-moment solve is deterministic");
+    check(di.a.at(x,y)==d.a.at(x,y) && di.b.at(x,y)==d.b.at(x,y),
+          "Y first-moment strength leaves AB unchanged");
+    if(x==0 || y==0 || x==95 || y==95)
+      check(d.y.at(x,y)==source.y.at(x,y),"first moments do not change retained contour values");
+  }
+  params.lumaChunkScale=0;params.chromaChunkScale=0;
+  auto bypass=pigment::synthesizePhase4Chunks(source,plates,hierarchy,params,{},second);
+  auto untouched=static_cast<const pigment::OwnedYabPlanes &>(bypass.plateAppearance[0]).view();
+  for(int y=0;y<96;++y) for(int x=0;x<96;++x)
+    check(untouched.y.at(x,y)==source.y.at(x,y),"zero chunk scale bypasses interior constraints exactly");
+}
+
+void barrierAblationSemantics() {
+  pigment::RectI bounds{0,0,32,32};
+  pigment::OwnedYabPlanes source(bounds);
+  pigment::PublicPlateSet plates(bounds,4);
+  pigment::Phase4RegionHierarchy h;h.bounds=bounds;h.boundaryStrength=pigment::OwnedPlane(bounds,.1f);
+  h.boundaryStrength.view().at(15,16)=.9f;
+  for(int i=0;i<4;++i) {
+    h.plates.emplace_back(bounds);auto &p=h.plates.back();p.yChunkCount=p.abChunkCount=2;
+    p.yChunk.resize(1024);p.abChunk.resize(1024);
+    p.yEdgeX.assign(1024,0);p.yEdgeY.assign(1024,0);p.abEdgeX.assign(1024,0);p.abEdgeY.assign(1024,0);
+    for(int y=0;y<32;++y) for(int x=0;x<32;++x) {
+      int index=y*32+x;p.yChunk[size_t(index)]=p.abChunk[size_t(index)]=x>=16;
+      if(x==15) p.yEdgeX[size_t(index)]=p.abEdgeX[size_t(index)]=100;
+      auto a=plates.appearance(i);a.y.at(x,y)=.01f*x+.02f*y+float((x+y)%2)*.01f;
+      a.a.at(x,y)=a.b.at(x,y)=0;
+      plates.alpha(i).at(x,y)=.25f;plates.supportY(i).at(x,y)=plates.supportAB(i).at(x,y)=1;
+    }
+  }
+  auto cut=diagnosticBarrierAblation(h,.5f);
+  check(h.plates[0].yChunkCount==2 && cut.plates[0].yChunkCount==1,"diagnostic ablation changes a copy only");
+  check(std::isinf(cut.plates[0].yEdgeX[16*32+15]),"strong contour remains explicit barrier after domains connect around it");
+  pigment::Phase4Params params;params.gradientComplexity=.1f;
+  auto solve=pigment::synthesizePhase4Chunks(static_cast<const pigment::OwnedYabPlanes &>(source).view(),plates,cut,params);
+  auto output=static_cast<const pigment::OwnedYabPlanes &>(solve.plateAppearance[0]).view();
+  auto automatic=static_cast<const pigment::PublicPlateSet &>(plates).appearance(0);
+  check(output.y.at(15,16)==automatic.y.at(15,16) && output.y.at(16,16)==automatic.y.at(16,16),
+        "retained high-confidence ablation contour values remain exact");
+}
+
+void renderIdentityAndAlpha() {
+  pigment::RectI b{-2, 3, 18, 17};
+  int stride = b.width() * 4 + 3;
+  std::vector<float> src(size_t(stride) * b.height(), -5), dst(src.size(), -9);
+  for (int y = b.y1; y < b.y2; ++y)
+    for (int x = b.x1; x < b.x2; ++x) {
+      size_t i = size_t(y - b.y1) * stride + (x - b.x1) * 4;
+      float a = .2f + .8f * float((x + y + 20) % 9) / 8;
+      src[i] = a * (.1f + .03f * x);
+      src[i + 1] = a * (-.2f + .04f * y);
+      src[i + 2] = a * ((x % 5) ? 0.3f : 2.0f);
+      src[i + 3] = a;
+    }
+  pigment::IntegratedPigmentParams p;
+  p.comparison = pigment::PigmentComparisonMode::AutomaticPlateGraph;
+  p.premultiplied = true;
+  p.phase4.latentCount = 12;
+  p.phase4.plateCount = 4;
+  p.phase4.plateScale = 8;
+  p.amount = 0;
+  pigment::Phase4RenderInputs in{
+      {src.data(), stride, b, 4}, {dst.data(), stride, b, 4}, b, p, {}};
+  pigment::processPigmentPhase4(in);
+  for (int y = b.y1; y < b.y2; ++y)
+    for (int x = b.x1; x < b.x2; ++x) {
+      size_t i = size_t(y - b.y1) * stride + (x - b.x1) * 4;
+      for (int c = 0; c < 4; ++c)
+        check(dst[i + c] == src[i + c],
+              "Amount zero is bit-exact and preserves alpha");
+    }
+}
+void researchRepresentationsAndCache() {
+  pigment::RectI b{0,0,16,16};std::vector<float> src(16*16*4),dst(src.size());
+  for(int y=0;y<16;++y)for(int x=0;x<16;++x){int n=(y*16+x)*4;src[n]=.02f*x;src[n+1]=.03f*y;src[n+2]=.05f+.01f*x;src[n+3]=1;}
+  pigment::IntegratedPigmentParams p;p.comparison=pigment::PigmentComparisonMode::AutomaticPlateGraph;p.phase4.latentCount=12;p.phase4.plateCount=4;p.phase4.lumaChunkScale=0;p.phase4.chromaChunkScale=0;p.phase4.spillAmount=0;p.phase4.representation=pigment::Phase4Representation::A3Passthrough;
+  pigment::Phase4ResearchCache cache;
+  pigment::Phase4RenderInputs in{{src.data(),64,b,4},{dst.data(),64,b,4},b,p,{},nullptr,&cache};
+  pigment::processPigmentPhase4(in);auto baseline=dst;
+  for(auto mode:{pigment::Phase4Representation::Poisson,pigment::Phase4Representation::RegionalEigen,pigment::Phase4Representation::SparseCurve,pigment::Phase4Representation::SecondMoments,pigment::Phase4Representation::LayeredBroadFields}){
+    in.params.phase4.representation=mode;pigment::processPigmentPhase4(in);
+    check(dst==baseline,"Every research mode honors zero Y/AB chunk bypass exactly");
+  }
+  auto frozenAnalysis=cache.automaticBuilds,frozenHierarchy=cache.hierarchyBuilds;
+  in.params.phase4.lumaChunkScale=1;in.params.phase4.chromaChunkScale=0;
+  pigment::processPigmentPhase4(in);
+  check(bool(cache.layeredBroad),"C5 selector runs the preserved layered prototype");
+  pigment::LayeredBroadOptions options;options.processAB=false;
+  auto isolated=pigment::layeredBroadFields(*cache.supported,*cache.hierarchy,options);
+  for(int i=0;i<cache.supported->count();++i)for(int y=0;y<16;++y)for(int x=0;x<16;++x){
+    auto field=cache.synthesis->plateAppearance[size_t(i)].view(),expected=isolated.appearance[size_t(i)].view();
+    check(field.y.at(x,y)==expected.y.at(x,y) && field.a.at(x,y)==expected.a.at(x,y) && field.b.at(x,y)==expected.b.at(x,y),"C5 integration matches isolated CPU reference and AB bypass");
+  }
+  auto c5Builds=cache.synthesisBuilds;
+  for(int view=int(pigment::PigmentDebugView::Phase4C5BroadTargetY);view<=int(pigment::PigmentDebugView::Phase4C5CombinedAB);++view){
+    in.params.debugView=static_cast<pigment::PigmentDebugView>(view);pigment::processPigmentPhase4(in);
+    for(float v:dst)check(std::isfinite(v),"C5 debug views remain finite");
+    check(cache.synthesisBuilds==c5Builds,"C5 debug edits reuse fitted layers");
+  }
+  check(cache.automaticBuilds==frozenAnalysis && cache.hierarchyBuilds==frozenHierarchy,"C5 selection and diagnostics leave frozen A1-B unchanged");
+  in.params.debugView=pigment::PigmentDebugView::Final;
+  in.params.phase4.lumaChunkScale=0;in.params.phase4.chromaChunkScale=0;
+  pigment::processPigmentPhase4(in);
+  auto abuilds=cache.automaticBuilds,hbuilds=cache.hierarchyBuilds,sbuilds=cache.synthesisBuilds;
+  in.params.phase4.spillAmount=.8;in.params.phase4.lumaSpill=0;in.params.phase4.spillReach=128;in.params.phase4.plates[0].biasA=.03;
+  pigment::processPigmentPhase4(in);
+  check(cache.automaticBuilds==abuilds && cache.hierarchyBuilds==hbuilds && cache.synthesisBuilds==sbuilds,"Creative/Spill controls reuse frozen upstream and selected synthesis");
+  auto tbuilds=cache.transportBuilds;
+  for(auto law:{pigment::ColorInteractionLaw::Density,pigment::ColorInteractionLaw::SpectralPigment}){
+    in.params.phase4.colorInteraction=law;in.params.phase4.pigmentDensity=.5f;
+    pigment::processPigmentPhase4(in);
+    check(cache.automaticBuilds==abuilds && cache.hierarchyBuilds==hbuilds && cache.synthesisBuilds==sbuilds,"Color law and density reuse frozen A1-B and Gate-C fields");
+    check(cache.transportBuilds==tbuilds,"Color law and density reuse exact transport");
+  }
+  for(int i=0;i<256;++i)check(dst[4*i+3]==src[4*i+3],"Research representations preserve alpha");
+  in.params.phase4.lumaChunkScale=1;in.params.phase4.chromaChunkScale=2;
+  in.params.phase4.representation=pigment::Phase4Representation::A3Passthrough;
+  pigment::processPigmentPhase4(in);
+  check(cache.hierarchyBuilds==hbuilds,"Organization edits only recut frozen merge trees");
+  check(cache.transportBuilds==tbuilds,"Hierarchy cuts do not invalidate intrinsic transport");
+  auto ibuilds=cache.interactionBuilds;
+  in.params.amount=.8f;in.params.mix=.7f;pigment::processPigmentPhase4(in);
+  check(cache.interactionBuilds==ibuilds,"Amount/Mix reuse appearance interaction and only finalize");
+  in.params.phase4.spillReach=0;pigment::processPigmentPhase4(in);
+  check(cache.transportBuilds==tbuilds+1,"Reach change invalidates transport");
+  {pigment::RectI mb{4,4,8,8};std::vector<float> data(16,0);pigment::ConstImageView mask{data.data(),4,mb,1};in.mask=&mask;
+    pigment::processPigmentPhase4(in);check(dst==src,"Zero/narrow mask gives bit-exact source inside and outside Mask RoD");in.mask=nullptr;}
+  in.params.phase4.colorInteraction=pigment::ColorInteractionLaw::LinearYAB;
+  pigment::processPigmentPhase4(in);auto fallbackReference=dst;int attempts=0;
+  in.accelerateSpill=[&](auto,auto&,auto&,auto&,auto&,auto&,auto,auto&){++attempts;return false;};
+  auto fallback=pigment::processPigmentPhase4(in);
+  check(attempts==1 && !fallback.metalSpill && dst==fallbackReference,"Failed optional Metal acceleration returns exact CPU reference");
+  in.params.phase4.colorInteraction=pigment::ColorInteractionLaw::SpectralPigment;
+  pigment::processPigmentPhase4(in);check(attempts==1,"Spectral never invokes Metal appearance accelerator");
+  in.accelerateSpill={};
+  for(auto debug:{pigment::PigmentDebugView::Phase4Source,pigment::PigmentDebugView::Phase4PublicReconstruction,pigment::PigmentDebugView::Phase4PreSpill,pigment::PigmentDebugView::Phase4SpillDifference,pigment::PigmentDebugView::Phase4YTransport,pigment::PigmentDebugView::Phase4ABTransport,pigment::PigmentDebugView::Phase4SourceGradientField}){
+    in.params.debugView=debug;pigment::processPigmentPhase4(in);for(float v:dst)check(std::isfinite(v),"Research debug fields finite and valid in every mode");
+    if(debug==pigment::PigmentDebugView::Phase4Source)check(dst==src,"Source diagnostic bit exact");
+  }
+}
+void sourceOnlyAnalysisCache() {
+  pigment::RectI b{-2,3,14,19};pigment::OwnedYabPlanes source(b);auto v=source.view();
+  for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){v.y.at(x,y)=.03f*x+.02f*y;v.a.at(x,y)=.05f*std::sin(float(x));v.b.at(x,y)=.03f*std::cos(float(y));}
+  pigment::Phase4Params p;p.latentCount=12;p.plateCount=4;
+  pigment::Phase4AnalysisCache cache;
+  auto original=static_cast<const pigment::OwnedYabPlanes&>(source).view();
+  auto supportOnly=pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
+  auto builds=cache.builds;p.plateScale=96;p.chromaSupportRatio=3;
+  auto reused=pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
+  auto fresh=pigment::buildPhase4AutomaticPlates(original,p,{}, {[]{return false;},pigment::boundedParallelRows,nullptr});
+  pigment::updatePhase4PlateSupports(supportOnly,p,true,true,{[]{return false;},pigment::boundedParallelRows,nullptr});
+  check(cache.builds==builds,"Plate scale/support changes reuse frozen source A1/A2/A3 analysis");
+  for(int i=0;i<p.plateCount;++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){auto a=reused.plates.appearance(i),c=fresh.plates.appearance(i);
+    check(a.y.at(x,y)==c.y.at(x,y) && a.a.at(x,y)==c.a.at(x,y) && a.b.at(x,y)==c.b.at(x,y),"Cached/fresh public appearance bit exact");
+    check(reused.plates.alpha(i).at(x,y)==fresh.plates.alpha(i).at(x,y) && reused.plates.supportY(i).at(x,y)==fresh.plates.supportY(i).at(x,y) && reused.plates.supportAB(i).at(x,y)==fresh.plates.supportAB(i).at(x,y),"Cached/fresh alpha and independent supports bit exact");}
+  for(int i=0;i<p.plateCount;++i)for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x)
+    check(supportOnly.plates.supportY(i).at(x,y)==fresh.plates.supportY(i).at(x,y) && supportOnly.plates.supportAB(i).at(x,y)==fresh.plates.supportAB(i).at(x,y),"Support-only rebuild is bit exact with full automatic rebuild");
+  v.y.at(b.x1,b.y1)+=.1f;pigment::buildPhase4AutomaticPlates(original,p,{}, {},&cache);
+  check(cache.builds==builds+1,"Source change invalidates frozen source analysis cache");
+}
+} // namespace
+void interactiveExecution() {
+  check(pigment::phase4PreviewAnalysisSize(0)==64 && pigment::phase4PreviewAnalysisSize(1)==128 && pigment::phase4PreviewAnalysisSize(2)==256,"Preview Quality presets preserve explicit analysis budgets");
+  pigment::RectI bounds{-3,7,77,55};std::vector<float> source(size_t(80)*48*4),out(source.size()),parallel(out.size());
+  for(int y=0;y<48;++y)for(int x=0;x<80;++x){size_t i=(size_t(y)*80+x)*4;source[i]=.02f*x-.15f;source[i+1]=.02f*y;source[i+2]=.03f*std::sin(float(x));source[i+3]=x==0?0.f:.7f;}
+  pigment::IntegratedPigmentParams p;p.phase4.latentCount=12;p.phase4.plateCount=4;p.amount=1;p.mix=1;p.premultiplied=true;
+  pigment::Phase4RenderInputs in{{source.data(),320,bounds,4},{out.data(),320,bounds,4},bounds,p};
+  pigment::Phase4InteractiveCache cache;
+  pigment::processPhase4Interactive(in,cache,64);auto stages=cache.stages.automaticBuilds;
+  for(size_t i=0;i<out.size();++i)check(std::isfinite(out[i]),"Interactive HDR/negative output finite");
+  for(size_t i=0;i<source.size()/4;++i){check(source[i*4+3]==out[i*4+3],"Interactive alpha bit exact");if(i%80==0)for(int c=0;c<3;++c)check(source[i*4+c]==out[i*4+c],"Interactive zero-alpha hidden RGB preserved");}
+  in.params.phase4.spillAmount=.6f;in.params.phase4.colorInteraction=pigment::ColorInteractionLaw::Density;
+  pigment::processPhase4Interactive(in,cache,64);
+  check(cache.guidanceBuilds==1 && cache.stages.automaticBuilds==stages,"Interactive downstream edits reuse guidance and source stages");
+  in.params.phase4.representation=pigment::Phase4Representation::LayeredBroadFields;
+  in.params.phase4.spillAmount=0;
+  pigment::processPhase4Interactive(in,cache,64);
+  check(bool(cache.stages.layeredBroad),"Guided C5 executes the existing CPU layered formulation");
+  check(cache.guidanceBuilds==1 && cache.stages.automaticBuilds==stages,"Guided C5 switching reuses frozen source/guidance");
+  for(float v:out)check(std::isfinite(v),"Guided C5 full-size output remains finite");
+  pigment::Phase4InteractiveCache separate;in.destination.data=parallel.data();
+  pigment::processPhase4Interactive(in,separate,64,{[]{return false;},pigment::boundedParallelRows,nullptr});
+  check(out==parallel,"Interactive serial/parallel deterministic parity");
+  in.params.amount=0;pigment::processPhase4Interactive(in,separate,64);
+  check(parallel==source,"Interactive Amount zero exact identity");
+}
+int main() {
+  interactiveExecution();
+  artistControlMapping();
+  parameterSemantics();
+  automaticPlates();
+  regionHierarchy();
+  primitiveGradientSurvival();
+  interiorBroadForm();
+  barrierAblationSemantics();
+  renderIdentityAndAlpha();
+  researchRepresentationsAndCache();
+  sourceOnlyAnalysisCache();
+  if (failures)
+    return 1;
+  std::cout << "All Phase 4 CPU tests passed (photographic gates are evaluated separately)\n";
+}

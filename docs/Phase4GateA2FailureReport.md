@@ -1,4 +1,10 @@
-# Phase 4 Gate A2 — Progressive Recovery Result
+# Phase 4 Gate A2 — Progressive Recovery Result (superseded)
+
+This report records the abandoned progressive/local-window optimization path.
+It is retained as research history, but its stop decision was superseded by the
+visual-basis checkpoint in `Phase4VisualBasisCheckpoint.md`.  Phase 4 now uses
+the recovered earlier visual vocabulary and evaluates success at the public
+plate/reconstruction level.
 
 Date: 2026-09-29
 

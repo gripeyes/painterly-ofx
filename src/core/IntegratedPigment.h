@@ -119,7 +119,24 @@ enum class PigmentDebugView {
   Phase4PreSpill,
   Phase4SpillInfluence,
   Phase4PostSpill,
-  Phase4DifferenceFromSource
+  Phase4DifferenceFromSource,
+  Phase4Source,
+  Phase4PublicReconstruction,
+  Phase4SpillDifference,
+  Phase4YInfluence,
+  Phase4YTransport,
+  Phase4ABTransport,
+  Phase4C5BroadTargetY,
+  Phase4C5BroadTargetAB,
+  Phase4C5Structure,
+  Phase4C5Medium,
+  Phase4C5Micro,
+  Phase4C5LayerYMembership,
+  Phase4C5LayerABMembership,
+  Phase4C5LayerYField,
+  Phase4C5LayerABField,
+  Phase4C5CombinedY,
+  Phase4C5CombinedAB
 };
 
 enum class PictorialDebugPlane { PlaneA = 0, PlaneB, PlaneC, PlaneD, Composite };

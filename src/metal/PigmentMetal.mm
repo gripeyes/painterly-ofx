@@ -144,7 +144,7 @@ struct DeviceResources {
                              "pigment_plane_structure", "pigment_plane_transition_relax",
                              "pigment_plane_fit_solve", "pigment_plane_evaluate_combine",
                              "pigment_plane_apply_veil", "pigment_plane_local_softness_blend",
-                             "pigment_plane_final"}) {
+                             "pigment_plane_final", "pigment_phase4_spill", "pigment_phase4_transport"}) {
       id<MTLFunction> function = [library newFunctionWithName:
           [NSString stringWithUTF8String:name]];
       if (!function) {
@@ -165,7 +165,7 @@ struct DeviceResources {
     }
   }
 
-  bool valid() const { return library != nil && pipelines.size() == 31; }
+  bool valid() const { return library != nil && pipelines.size() == 33; }
 };
 
 std::mutex gRegistryMutex;
@@ -457,6 +457,9 @@ GpuIntegratedParams makeIntegratedParams(const IntegratedMetalExecutionRequest& 
 
 struct MetalInstance::Impl {
   mutable std::mutex mutex;
+  id<MTLCommandQueue> phase4Queue=nil;
+  std::shared_ptr<DeviceResources> phase4Resources;
+  id<MTLBuffer> phase4Input=nil,phase4Original=nil,phase4Output=nil,phase4Composite=nil;
   MetalDiagnostics diagnostics;
   id<MTLCommandQueue> fallbackQueue = nil;
   id<MTLDevice> cachedDevice = nil;
@@ -1501,6 +1504,8 @@ struct MetalInstance::Impl {
     cachedIntegratedTextures = nil;
     cachedPlaneTextures = nil;
     cachedPlaneModels = nil;
+    phase4Input=nil;phase4Original=nil;phase4Output=nil;phase4Composite=nil;
+    phase4Queue=nil;phase4Resources.reset();
     cachedDevice = nil;
     cachedWidth = cachedHeight = 0;
     cachedIntegratedWidth = cachedIntegratedHeight = 0;
@@ -1511,6 +1516,114 @@ struct MetalInstance::Impl {
 
 MetalInstance::MetalInstance() : impl_(std::make_unique<Impl>()) {}
 MetalInstance::~MetalInstance() = default;
+bool MetalInstance::renderPhase4Transport(const PublicPlateSet& plates,const SparseAffinityGraph& graph,
+    const Phase4Params& params,Phase4SpillTransport& result,const ExecutionContext& execution) {
+  if(params.colorInteraction==ColorInteractionLaw::SpectralPigment)return false;
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  @autoreleasepool {
+    if(!impl_->phase4Queue){id<MTLDevice> d=MTLCreateSystemDefaultDevice();if(!d)return false;
+      impl_->phase4Resources=resourcesFor(d);if(!impl_->phase4Resources->valid())return false;impl_->phase4Queue=[d newCommandQueue];}
+    const uint32_t nodes=graph.nodeCount(),fields=plates.count()*2;auto b=plates.bounds();
+    if(!nodes || graph.rowOffsets.size()!=size_t(nodes)+1)return false;
+    std::vector<uint32_t> rows(nodes+1),from(graph.edges.size());std::vector<float> factor(graph.edges.size());
+    for(const auto& e:graph.edges){if(e.target<0 || e.target>=int(nodes))return false;++rows[e.target+1];}
+    for(uint32_t n=1;n<=nodes;++n)rows[n]+=rows[n-1];auto cursor=rows;
+    for(uint32_t n=0;n<nodes;++n)for(int ei=graph.rowOffsets[n];ei<graph.rowOffsets[n+1];++ei){const auto& e=graph.edges[ei];auto index=cursor[e.target]++;from[index]=n;
+      factor[index]=params.spillReach<=0 || e.weight<=0 || (params.structureRespect>=1 && e.boundary>=1)?0:
+        std::exp(-(e.physicalDistance*(1.f-std::log(e.weight)+6.f*params.structureRespect*e.boundary))/params.spillReach);}
+    std::vector<float> seed(size_t(nodes)*fields);
+    for(uint32_t field=0;field<fields;++field){auto support=field%2?plates.supportAB(field/2):plates.supportY(field/2);
+      for(int gy=0;gy<graph.height;++gy)for(int gx=0;gx<graph.width;++gx){int x=b.x1+std::min(b.width()-1,gx*b.width()/graph.width),y=b.y1+std::min(b.height()-1,gy*b.height()/graph.height);seed[size_t(field)*nodes+gy*graph.width+gx]=support.at(x,y);}}
+    auto device=impl_->phase4Queue.device;
+    auto bytes=[&](const void* data,size_t n){return [device newBufferWithBytes:data length:std::max(size_t(4),n) options:MTLResourceStorageModeShared];};
+    // Empty graph arrays need a valid binding but are never accessed.
+    uint32_t zero=0;id<MTLBuffer> rb=bytes(rows.data(),rows.size()*4),fb=bytes(from.empty()?&zero:from.data(),from.size()*4),ab=bytes(factor.empty()?reinterpret_cast<float*>(&zero):factor.data(),factor.size()*4);
+    id<MTLBuffer> a=bytes(seed.data(),seed.size()*4),z=[device newBufferWithLength:seed.size()*4 options:MTLResourceStorageModeShared],change=bytes(&zero,4);
+    if(!rb || !fb || !ab || !a || !z || !change)return false;
+    auto pipeline=impl_->phase4Resources->pipelines.at("pigment_phase4_transport");uint32_t shape[]={nodes,fields};bool converged=params.spillReach<=0;
+    // Test the final pass of each batch; a fixed point is stationary. No
+    // epsilon cutoff that would erase valid weak transported influence.
+    for(uint32_t iter=0;!converged && iter<=nodes;){
+      if(execution.cancelled())return false;
+      id<MTLCommandBuffer> command=[impl_->phase4Queue commandBuffer];uint32_t batch=std::min(32u,nodes+1-iter);
+      for(uint32_t step=0;step<batch;++step){id<MTLBlitCommandEncoder> clear=[command blitCommandEncoder];[clear fillBuffer:change range:NSMakeRange(0,4) value:0];[clear endEncoding];
+        id<MTLComputeCommandEncoder> enc=[command computeCommandEncoder];if(!enc)return false;[enc setComputePipelineState:pipeline];
+        [enc setBuffer:rb offset:0 atIndex:0];[enc setBuffer:fb offset:0 atIndex:1];[enc setBuffer:ab offset:0 atIndex:2];[enc setBuffer:a offset:0 atIndex:3];[enc setBuffer:z offset:0 atIndex:4];[enc setBuffer:change offset:0 atIndex:5];[enc setBytes:shape length:8 atIndex:6];
+        [enc dispatchThreads:MTLSizeMake(seed.size(),1,1) threadsPerThreadgroup:MTLSizeMake(std::min(NSUInteger(128),pipeline.maxTotalThreadsPerThreadgroup),1,1)];[enc endEncoding];std::swap(a,z);
+      }
+      [command commit];[command waitUntilCompleted];if(command.status!=MTLCommandBufferStatusCompleted)return false;
+      converged=*(uint32_t*)change.contents==0;iter+=batch;
+    }
+    if(!converged)return false;
+    result={};result.reach=params.spillReach;result.structureRespect=params.structureRespect;
+    const float* out=(float*)a.contents;for(int i=0;i<plates.count();++i){result.y.emplace_back(out+size_t(2*i)*nodes,out+size_t(2*i+1)*nodes);result.ab.emplace_back(out+size_t(2*i+1)*nodes,out+size_t(2*i+2)*nodes);}
+    return true;
+  }
+}
+bool MetalInstance::renderPhase4Spill(ConstYabPlanes original,const PublicPlateSet& plates,
+    const Phase4ChunkSynthesis& synthesis,const SparseAffinityGraph& graph,
+    const Phase4Params& params,const Phase4SpillTransport& transport,
+    WorkingGamut gamut,Phase4SpillResult& result) {
+  if(params.colorInteraction==ColorInteractionLaw::SpectralPigment)return false;
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  auto start=Clock::now();auto& diagnostics=impl_->diagnostics;diagnostics={};
+  @autoreleasepool {
+    if(!impl_->phase4Queue){id<MTLDevice> d=MTLCreateSystemDefaultDevice();if(!d)return false;
+      impl_->phase4Resources=resourcesFor(d);if(!impl_->phase4Resources->valid())return false;
+      impl_->phase4Queue=[d newCommandQueue];}
+    id<MTLDevice> device=impl_->phase4Queue.device;
+    const auto b=plates.bounds();const uint32_t count=plates.count(),pixels=b.width()*b.height();
+    if(!pixels || transport.y.size()!=count || transport.ab.size()!=count ||
+      transport.reach!=params.spillReach || transport.structureRespect!=params.structureRespect)return false;
+    for(uint32_t i=0;i<count;++i)if(transport.y[i].size()!=size_t(graph.nodeCount()) || transport.ab[i].size()!=size_t(graph.nodeCount()))return false;
+    struct Params {uint32_t pixels,plates,law;float amount,luma,chroma,asymmetry,density,whiteX,whiteZ;
+      float toXYZ[9],toRGB[9],control[56];} p{};
+    p.pixels=pixels;p.plates=count;p.law=uint32_t(params.colorInteraction);
+    p.amount=params.spillAmount;p.luma=params.lumaSpill;p.chroma=params.chromaSpill;
+    p.asymmetry=std::clamp(params.spillAsymmetry,0.f,1.f);p.density=std::isfinite(params.pigmentDensity)?std::clamp(params.pigmentDensity,0.f,1.f):0;
+    auto matrix=opponentMatrixData(gamut);p.whiteX=matrix.whiteX;p.whiteZ=matrix.whiteZ;
+    std::copy(matrix.rgbToXyz.begin(),matrix.rgbToXyz.end(),p.toXYZ);
+    std::copy(matrix.xyzToRgb.begin(),matrix.xyzToRgb.end(),p.toRGB);
+    auto buffer=[&](id<MTLBuffer> __strong& v,size_t floats){if(!v || v.length<floats*sizeof(float)){v=[device newBufferWithLength:floats*sizeof(float) options:MTLResourceStorageModeShared];++diagnostics.scratchAllocations;}return v!=nil;};
+    if(!buffer(impl_->phase4Input,size_t(pixels)*count*15) || !buffer(impl_->phase4Original,size_t(pixels)*3) ||
+       !buffer(impl_->phase4Output,size_t(pixels)*count*5) || !buffer(impl_->phase4Composite,size_t(pixels)*3))return false;
+    float* input=(float*)impl_->phase4Input.contents;float* source=(float*)impl_->phase4Original.contents;
+    ColorInteraction color(gamut);
+    boundedParallelRows(0,count,[&](int begin,int end){
+    for(uint32_t i=uint32_t(begin);i<uint32_t(end);++i){const auto& c=params.plates[i];float values[]={float(c.enabled),c.weight,c.tone,c.biasA,c.biasB,c.spillOut,c.receiveSpill};std::copy(values,values+7,p.control+i*7);
+      auto v=synthesis.plateAppearance[i].view();auto sy=plates.supportY(i),sc=plates.supportAB(i);
+      for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){size_t pixel=size_t(y-b.y1)*b.width()+x-b.x1,k=(i*size_t(pixels)+pixel)*15;
+        int gx=std::min(graph.width-1,(x-b.x1)*graph.width/b.width()),gy=std::min(graph.height-1,(y-b.y1)*graph.height/b.height());
+        int sx=b.x1+std::min(b.width()-1,gx*b.width()/graph.width),ssy=b.y1+std::min(b.height()-1,gy*b.height()/graph.height);size_t n=size_t(gy)*graph.width+gx;
+        float ty=sy.at(x,y),tab=sc.at(x,y);
+        if(params.spillReach>0){ty=std::min(1.f,ty+std::max(0.f,transport.y[i][n]-sy.at(sx,ssy)));tab=std::min(1.f,tab+std::max(0.f,transport.ab[i][n]-sc.at(sx,ssy)));}
+        float fields[]={v.y.at(x,y),v.a.at(x,y),v.b.at(x,y),plates.alpha(i).at(x,y),sy.at(x,y),sc.at(x,y),ty,tab};std::copy(fields,fields+8,input+k);
+        if(params.colorInteraction==ColorInteractionLaw::Density){auto m=color.encode({fields[0]+c.tone,fields[1]+c.biasA,fields[2]+c.biasB},ColorInteractionLaw::Density);
+          input[k+8]=float(m.magnitude);for(int z=0;z<3;++z){input[k+9+z]=float(m.absorption[z]);input[k+12+z]=float(m.residual[z]);}}
+        if(i==0){source[pixel*3]=original.y.at(x,y);source[pixel*3+1]=original.a.at(x,y);source[pixel*3+2]=original.b.at(x,y);}
+      }} });
+    diagnostics.wrapOrUploadMs=milliseconds(start,Clock::now());
+    auto pipeline=impl_->phase4Resources->pipelines.at("pigment_phase4_spill");
+    id<MTLCommandBuffer> command=[impl_->phase4Queue commandBuffer];id<MTLComputeCommandEncoder> encoder=[command computeCommandEncoder];if(!encoder)return false;
+    [encoder setComputePipelineState:pipeline];[encoder setBuffer:impl_->phase4Input offset:0 atIndex:0];[encoder setBuffer:impl_->phase4Original offset:0 atIndex:1];
+    [encoder setBuffer:impl_->phase4Output offset:0 atIndex:2];[encoder setBuffer:impl_->phase4Composite offset:0 atIndex:3];[encoder setBytes:&p length:sizeof(p) atIndex:4];
+    [encoder dispatchThreads:MTLSizeMake(pixels,1,1) threadsPerThreadgroup:MTLSizeMake(std::min(NSUInteger(128),pipeline.maxTotalThreadsPerThreadgroup),1,1)];
+    [encoder endEncoding];[command commit];[command waitUntilCompleted];
+    if(command.status!=MTLCommandBufferStatusCompleted){diagnostics.failure=MetalFailure::Execution;return false;}
+    diagnostics.gpuMs=(command.GPUEndTime-command.GPUStartTime)*1000;
+    auto readStart=Clock::now();result=Phase4SpillResult(b);
+    for(uint32_t i=0;i<count;++i){result.plateAppearance.emplace_back(b);result.influence.emplace_back(b);result.influenceY.emplace_back(b);result.transportY.emplace_back(b);result.transportAB.emplace_back(b);}
+    const float* out=(float*)impl_->phase4Output.contents;const float* composite=(float*)impl_->phase4Composite.contents;auto cv=result.composite.view();
+    boundedParallelRows(0,count,[&](int begin,int end){
+    for(uint32_t i=uint32_t(begin);i<uint32_t(end);++i){auto v=result.plateAppearance[i].view();for(int y=b.y1;y<b.y2;++y)for(int x=b.x1;x<b.x2;++x){size_t pixel=size_t(y-b.y1)*b.width()+x-b.x1,o=(i*size_t(pixels)+pixel)*5,k=(i*size_t(pixels)+pixel)*15;
+      v.y.at(x,y)=out[o];v.a.at(x,y)=out[o+1];v.b.at(x,y)=out[o+2];result.influenceY[i].view().at(x,y)=out[o+3];result.influence[i].view().at(x,y)=out[o+4];
+      result.transportY[i].view().at(x,y)=input[k+6];result.transportAB[i].view().at(x,y)=input[k+7];
+      if(i==0){cv.y.at(x,y)=composite[pixel*3];cv.a.at(x,y)=composite[pixel*3+1];cv.b.at(x,y)=composite[pixel*3+2];}}} });
+    diagnostics.readbackMs=milliseconds(readStart,Clock::now());diagnostics.totalMs=milliseconds(start,Clock::now());
+    diagnostics.scratchBytes=impl_->phase4Input.length+impl_->phase4Original.length+impl_->phase4Output.length+impl_->phase4Composite.length;
+    diagnostics.deviceName=device.name.UTF8String;diagnostics.path=MetalPath::CpuStaging;return true;
+  }
+}
 bool MetalInstance::render(const MetalExecutionRequest& request) {
   return impl_->render(request);
 }
